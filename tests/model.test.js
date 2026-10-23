@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBoard, validateBoard, History, containedNodes, zoomAt, screenToWorld, edgeGeometry } from '../model.js';
+import { createBoard, validateBoard, History, containedNodes, createGroupCopy, LIMITS, zoomAt, screenToWorld, edgeGeometry } from '../model.js';
 
 test('seed and empty boards survive a JSON export / import round trip', () => {
   for (const empty of [true, false]) {
@@ -22,6 +22,56 @@ test('group movement includes only cards entirely inside the group', () => {
   const group = { x: 100, y: 100, w: 400, h: 400 };
   const inside = { id: 'a', x: 100, y: 100, w: 200, h: 130 }, crossing = { id: 'b', x: 450, y: 150, w: 200, h: 130 };
   assert.deepEqual(containedNodes(group, [inside, crossing]), [inside]);
+});
+test('copying a group preserves contents and remaps only its internal edges', () => {
+  const board = createBoard(), original = structuredClone(board), source = board.groups[0];
+  board.edges.push({ id: 'external', from: 'seed-task', to: 'seed-image', label: '外部关系', arrow: true });
+  const before = structuredClone(board), copy = createGroupCopy(board, source.id);
+  assert.equal(copy.nodes.length, 3);
+  assert.equal(copy.edges.length, 2);
+  assert.notEqual(copy.group.id, source.id);
+  assert.ok(copy.group.x > Math.max(...[...board.nodes, ...board.groups].map(n => n.x + n.w)));
+  for (let i = 0; i < copy.nodes.length; i++) {
+    const n = copy.nodes[i], src = board.nodes[i];
+    assert.notEqual(n.id, src.id);
+    assert.equal(n.x - copy.group.x, src.x - source.x);
+    assert.equal(n.y - copy.group.y, src.y - source.y);
+    assert.equal(n.title, src.title);
+    assert.equal(n.body, src.body);
+  }
+  const copyIds = new Set(copy.nodes.map(n => n.id));
+  for (const edge of copy.edges) {
+    assert.ok(copyIds.has(edge.from) && copyIds.has(edge.to));
+    assert.ok(!board.edges.some(e => e.id === edge.id));
+  }
+  assert.deepEqual(copy.edges.map(e => [e.label, e.arrow]), original.edges.slice(0, 2).map(e => [e.label, e.arrow]));
+  const task = copy.nodes.find(n => n.kind === 'task'), sourceTask = board.nodes.find(n => n.kind === 'task');
+  assert.deepEqual(task.items.map(t => [t.text, t.done]), sourceTask.items.map(t => [t.text, t.done]));
+  task.items[0].done = false;
+  assert.notEqual(task.items[0].id, sourceTask.items[0].id);
+  assert.deepEqual(board, before);
+});
+test('group copies retain image data and support empty groups without external edges', () => {
+  const board = createBoard(), copy = createGroupCopy(board, board.groups[1].id);
+  assert.equal(copy.nodes.find(n => n.kind === 'image').src, board.nodes.find(n => n.kind === 'image').src);
+  assert.equal(copy.edges.length, 1);
+  const emptyBoard = createBoard(true);
+  emptyBoard.groups.push({ ...board.groups[0], id: 'empty' });
+  const empty = createGroupCopy(emptyBoard, 'empty');
+  assert.deepEqual(empty.nodes, []);
+  assert.deepEqual(empty.edges, []);
+});
+test('copying a group refuses item or edge overflow before changing the board', () => {
+  const board = createBoard();
+  while (board.nodes.length + board.groups.length < LIMITS.maxItems) board.nodes.push({ ...board.nodes[0], id: `extra-${board.nodes.length}`, x: -10000 });
+  const before = structuredClone(board);
+  assert.throws(() => createGroupCopy(board, board.groups[0].id), /1000/);
+  assert.deepEqual(board, before);
+  const edgeBoard = createBoard();
+  edgeBoard.edges = Array.from({ length: LIMITS.maxEdges }, (_, i) => ({ ...edgeBoard.edges[0], id: `edge-${i}` }));
+  assert.throws(() => createGroupCopy(edgeBoard, edgeBoard.groups[0].id), /3000/);
+  assert.equal(edgeBoard.nodes.length, 5);
+  assert.equal(edgeBoard.groups.length, 2);
 });
 test('undo / redo snapshots are independent and a new change clears redo', () => {
   const history = new History(2), board = createBoard(true);

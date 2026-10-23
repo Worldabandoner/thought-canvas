@@ -115,7 +115,10 @@ a{color:inherit;text-decoration:none}
 .image-node .node-title{font-size:12px;font-weight:500;line-height:1.7;margin:0 4px;color:#7f8972}
 .resize-handle{position:absolute;right:4px;bottom:4px;width:13px;height:13px;cursor:nwse-resize;opacity:0;border-radius:2px;background:repeating-linear-gradient(135deg,transparent,transparent 3px,#809274 3px,#809274 4px);clip-path:polygon(100% 0,100% 100%,0 100%)}
 .canvas-node:hover .resize-handle,.canvas-group:hover .resize-handle,.selected .resize-handle{opacity:.55}
-.canvas-group{border:1.5px dashed var(--group-border,#cfd8bf);border-radius:18px;background:var(--group-bg,#eef2e640);z-index:0;min-width:280px;min-height:180px}
+.canvas-group{border:1.5px dashed var(--group-border,#cfd8bf);border-radius:18px;background:var(--group-bg,#eef2e640);z-index:0;min-width:280px;min-height:180px;cursor:grab}
+.canvas-group:active{cursor:grabbing}
+.group-hint{position:absolute;top:12px;right:16px;font-size:9px;letter-spacing:.3px;color:var(--group-ink,#8c997c);opacity:.8;pointer-events:none}
+.viewport.tool-note .canvas-group,.viewport.tool-task .canvas-group,.viewport.tool-group .canvas-group{cursor:crosshair}
 .canvas-group.selected{outline:2px solid #769367;outline-offset:4px}
 .group-title{position:absolute;left:18px;top:-16px;background:var(--canvas);padding:6px 12px;display:flex;align-items:center;gap:8px;border-radius:6px;color:var(--group-ink,#8c997c);font-size:11px;letter-spacing:1px;cursor:grab;max-width:85%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .group-title svg{width:13px;height:13px}

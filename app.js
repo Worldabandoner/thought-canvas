@@ -1,4 +1,4 @@
-import { COLORS, LIMITS, uid, clone, clamp, screenToWorld, zoomAt, containedNodes, boundsOf, edgeGeometry, makeNode, createBoard, validateBoard, History } from './model.js';
+import { COLORS, LIMITS, uid, clone, clamp, screenToWorld, zoomAt, containedNodes, boundsOf, createGroupCopy, edgeGeometry, makeNode, createBoard, validateBoard, History } from './model.js';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -156,10 +156,12 @@ function renderGroups() {
   const fragment = document.createDocumentFragment();
   for (const n of board.groups) {
     const group = el('section', 'canvas-group'); paintCard(group, n, true);
+    group.title = '拖动标题、框内空白或普通边框移动整组；按住空格拖动画布';
     const title = el('div', 'group-title'); title.append(icon('group'), el('span', '', n.title));
-    title.tabIndex = 0; title.setAttribute('aria-label', `分组：${n.title}，拖动可移动整个分组`);
+    title.tabIndex = 0; title.setAttribute('aria-label', `分组：${n.title}，拖动标题、空白或边框可移动整个分组`);
     const edit = el('button'); edit.append(icon('more')); edit.dataset.action = 'edit'; edit.setAttribute('aria-label', `编辑分组 ${n.title}`); title.append(edit);
-    const resize = el('span', 'resize-handle'); resize.dataset.resize = 'true'; group.append(title, resize); fragment.append(group);
+    const hint = el('span', 'group-hint', '拖动空白处或边框，移动整组');
+    const resize = el('span', 'resize-handle'); resize.dataset.resize = 'true'; resize.title = '拖动调整分组范围'; group.append(title, hint, resize); fragment.append(group);
   }
   $('#group-layer').replaceChildren(fragment);
 }
@@ -202,6 +204,8 @@ function renderSelection() {
   const item = currentItem(); $('#selection-bar').hidden = !item;
   if (item) $('#selection-name').textContent = selected.type === 'edge' ? item.label || '关系连线' : item.title;
   $('#duplicate-selected').hidden = selected?.type === 'edge';
+  $('#duplicate-selected').title = selected?.type === 'group' ? '复制整个分组（含框内卡片和内部连线）' : '复制';
+  $('#duplicate-selected').setAttribute('aria-label', selected?.type === 'group' ? '复制整个分组' : '复制选中内容');
   for (const card of $$('.canvas-node,.canvas-group,.edge-group')) {
     const type = card.classList.contains('edge-group') ? 'edge' : card.classList.contains('canvas-group') ? 'group' : 'node';
     card.classList.toggle('selected', selected?.id === card.dataset.id && selected?.type === type);
@@ -297,6 +301,17 @@ function deleteSelected() {
 }
 function duplicateSelected() {
   const item = currentItem(); if (!item || selected.type === 'edge' || !ensureCapacity()) return;
+  if (selected.type === 'group') {
+    let copy;
+    try { copy = createGroupCopy(board, item.id); } catch (error) { toast(error.message); return; }
+    mutate(() => {
+      board.groups.push(copy.group); board.nodes.push(...copy.nodes); board.edges.push(...copy.edges);
+      selected = { type: 'group', id: copy.group.id };
+    });
+    focusItem(copy.group, 'group');
+    toast(`已复制分组、${copy.nodes.length} 张卡片和 ${copy.edges.length} 条内部连线`);
+    return;
+  }
   const copy = clone(item); copy.id = uid(); copy.x += 35; copy.y += 35; copy.title += ' · 副本';
   if (copy.items) copy.items.forEach(t => { t.id = uid(); });
   mutate(() => { (selected.type === 'group' ? board.groups : board.nodes).push(copy); selected = { type: selected.type, id: copy.id }; });
@@ -311,10 +326,9 @@ viewport.addEventListener('pointerdown', event => {
   const pan = event.button === 1 || spaceHeld || tool === 'hand';
   if (pan) { startPan(event); return; }
   if (card && tool === 'connect') { connectNode(card.dataset.id); event.preventDefault(); return; }
-  if (!card && !edge && !event.target.closest('.group-title') && ['note', 'task', 'group'].includes(tool)) { addAt(tool, worldPoint(event)); return; }
+  if (!card && !edge && !event.target.closest('.group-title,[data-resize]') && ['note', 'task', 'group'].includes(tool)) { addAt(tool, worldPoint(event)); return; }
   if (edge) { setSelection({ type: 'edge', id: edge.dataset.id }); return; }
-  const groupHandle = group && (event.target.closest('.group-title') || event.target.dataset.resize);
-  if (card || groupHandle) {
+  if (card || group) {
     const type = card ? 'node' : 'group', element = card || group;
     const item = (card ? board.nodes : board.groups).find(n => n.id === element.dataset.id); if (!item) return;
     setSelection({ type, id: item.id });

@@ -24,6 +24,31 @@ export function boundsOf(items) {
   const x = Math.min(...items.map(n => n.x)), y = Math.min(...items.map(n => n.y));
   return { x, y, w: Math.max(...items.map(n => n.x + n.w)) - x, h: Math.max(...items.map(n => n.y + n.h)) - y };
 }
+export function createGroupCopy(board, groupId) {
+  const source = board.groups.find(g => g.id === groupId);
+  if (!source) throw new Error('没有找到要复制的分组');
+  const members = containedNodes(source, board.nodes);
+  const memberIds = new Set(members.map(n => n.id));
+  const internalEdges = board.edges.filter(e => memberIds.has(e.from) && memberIds.has(e.to));
+  if (board.nodes.length + board.groups.length + members.length + 1 > LIMITS.maxItems) throw new Error('复制后会超过 1000 个内容项，未复制任何内容');
+  if (board.edges.length + internalEdges.length > LIMITS.maxEdges) throw new Error('复制后会超过 3000 条连线，未复制任何内容');
+
+  // Place the copy beyond the current canvas contents. An overlapping copy would
+  // accidentally pick up original cards on its next spatial group move.
+  const bounds = boundsOf([...board.nodes, ...board.groups]);
+  let x = bounds.x + bounds.w + 64;
+  if (x + source.w > 1e7) x = bounds.x - source.w - 64;
+  if (x < -1e7) throw new Error('画布边界附近没有足够空间复制分组');
+  const dx = x - source.x, idMap = new Map(members.map(n => [n.id, uid()]));
+  const group = { ...clone(source), id: uid(), x, title: `${source.title.slice(0, 155)} · 副本` };
+  const nodes = members.map(n => {
+    const copy = { ...clone(n), id: idMap.get(n.id), x: n.x + dx };
+    if (copy.items) copy.items.forEach(t => { t.id = uid(); });
+    return copy;
+  });
+  const edges = internalEdges.map(e => ({ ...clone(e), id: uid(), from: idMap.get(e.from), to: idMap.get(e.to) }));
+  return { group, nodes, edges };
+}
 export function edgeGeometry(a, b) {
   const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
   const dx = bc.x - ac.x, dy = bc.y - ac.y;
