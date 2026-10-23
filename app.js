@@ -209,7 +209,7 @@ function renderSelection() {
 }
 function setSelection(selection) { selected = selection; renderSelection(); renderOutline(); }
 function render() {
-  $('#board-title').value = board.title; $('#breadcrumb-title').textContent = board.title; document.title = `${board.title} · 思想画布`;
+  $('#board-title').value = board.title; document.title = `${board.title} · 思想画布`;
   renderGroups(); renderNodes(); renderEdges(); renderOutline(); renderSelection();
   $('#empty-state').hidden = board.nodes.length + board.groups.length > 0;
   $('#canvas-stats').textContent = `${board.nodes.length} 个想法  /  ${board.edges.length} 条连接`;
@@ -458,8 +458,11 @@ $('#search-input').addEventListener('input', event => { search = event.target.va
 function setFilter(next) { filter = next; $('#overview-btn').classList.toggle('active', next === 'all'); $('#tasks-btn').classList.toggle('active', next === 'tasks'); $('#outline-title').textContent = next === 'tasks' ? '我的待办卡片' : '画布中的内容'; renderOutline(); }
 $('#overview-btn').addEventListener('click', () => { setFilter('all'); fitAll(); }); $('#tasks-btn').addEventListener('click', () => setFilter('tasks'));
 function setSidebarCollapsed(collapsed) {
+  const focusWasInside = $('#sidebar').contains(document.activeElement);
+  closeMenu();
   $('#sidebar').classList.toggle('collapsed', collapsed); $('#sidebar').inert = collapsed;
   $('#toggle-sidebar').setAttribute('aria-expanded', String(!collapsed));
+  if (collapsed && focusWasInside) $('#toggle-sidebar').focus({ preventScroll: true });
 }
 $('#toggle-sidebar').addEventListener('click', () => setSidebarCollapsed(!$('#sidebar').classList.contains('collapsed')));
 $('#close-sidebar').addEventListener('click', () => setSidebarCollapsed(true));
