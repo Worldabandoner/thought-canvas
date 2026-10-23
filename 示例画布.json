@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "id": "bcbffb67-fd41-4dd7-b6f5-5210fcae79d2",
+  "title": "我的第一张画布",
+  "nodes": [
+    {
+      "id": "seed-start",
+      "kind": "note",
+      "x": 100,
+      "y": 155,
+      "w": 286,
+      "h": 235,
+      "title": "把脑中的画面，\n放在这里。",
+      "body": "一个念头、一件小事，\n或一个还没想清楚的问题。\n\n让它先有位置，答案慢慢长出来。",
+      "color": "butter"
+    },
+    {
+      "id": "seed-task",
+      "kind": "task",
+      "x": 492,
+      "y": 170,
+      "w": 290,
+      "h": 245,
+      "title": "从一个小行动开始",
+      "color": "sage",
+      "body": "",
+      "due": "",
+      "items": [
+        {
+          "id": "seed-t1",
+          "text": "给这个空间起个名字",
+          "done": true
+        },
+        {
+          "id": "seed-t2",
+          "text": "放下此刻脑中的一个念头",
+          "done": false
+        },
+        {
+          "id": "seed-t3",
+          "text": "把有关的想法连接起来",
+          "done": false
+        }
+      ]
+    },
+    {
+      "id": "seed-position",
+      "kind": "note",
+      "x": 158,
+      "y": 452,
+      "w": 310,
+      "h": 210,
+      "title": "每个位置，都有你的含义",
+      "body": "左上角，可以是今天最在意的事。\n靠近一点，可能意味着彼此有关。\n\n这里的秩序，由你定义。",
+      "color": "blue"
+    },
+    {
+      "id": "seed-image",
+      "kind": "image",
+      "x": 904,
+      "y": 176,
+      "w": 300,
+      "h": 225,
+      "title": "给灵感留一扇窗",
+      "body": "",
+      "color": "paper",
+      "src": "./assets/landscape.svg"
+    },
+    {
+      "id": "seed-idea",
+      "kind": "note",
+      "x": 918,
+      "y": 444,
+      "w": 288,
+      "h": 218,
+      "title": "还没想好，也没关系",
+      "body": "那些暂时用不上的灵感，\n也值得有一个停靠的地方。\n\n双击编辑，或拖一张图片进来。",
+      "color": "lilac"
+    }
+  ],
+  "groups": [
+    {
+      "id": "seed-g1",
+      "kind": "group",
+      "x": 64,
+      "y": 122,
+      "w": 752,
+      "h": 550,
+      "title": "01  /  此刻，正在发生",
+      "body": "",
+      "color": "sage"
+    },
+    {
+      "id": "seed-g2",
+      "kind": "group",
+      "x": 866,
+      "y": 122,
+      "w": 376,
+      "h": 550,
+      "title": "02  /  留一点想象的空间",
+      "body": "",
+      "color": "lilac"
+    }
+  ],
+  "edges": [
+    {
+      "id": "seed-e1",
+      "from": "seed-start",
+      "to": "seed-task",
+      "label": "落地成行动",
+      "arrow": true
+    },
+    {
+      "id": "seed-e2",
+      "from": "seed-start",
+      "to": "seed-position",
+      "label": "找到自己的位置",
+      "arrow": false
+    },
+    {
+      "id": "seed-e3",
+      "from": "seed-image",
+      "to": "seed-idea",
+      "label": "由此想到",
+      "arrow": true
+    }
+  ],
+  "view": null,
+  "updatedAt": "2026-10-23T09:51:28.259Z"
+}

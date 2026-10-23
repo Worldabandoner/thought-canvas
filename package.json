@@ -1,0 +1,14 @@
+{
+  "name": "thought-canvas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "思想画布 · 让想法找到自己的位置",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check app.js && node --check model.js && node --check server.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

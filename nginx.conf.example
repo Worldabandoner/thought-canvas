@@ -1,0 +1,19 @@
+server {
+    listen 80;
+    server_name canvas.example.com;
+    root /var/www/thought-canvas;
+    index index.html;
+
+    charset utf-8;
+    include mime.types;
+    add_header X-Content-Type-Options nosniff always;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Only application assets belong in this directory.
+    location ~ /\. {
+        deny all;
+    }
+}
