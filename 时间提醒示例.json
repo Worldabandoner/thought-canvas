@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "id": "10c9b749-85c4-46dc-8c0e-f2bdf8cacbf8",
+  "title": "时间提醒 · 体验画布",
+  "nodes": [
+    {
+      "id": "0b6905f1-7f6b-431a-b864-d0be477843fb",
+      "kind": "timer",
+      "title": "今天，把网课刷完",
+      "body": "分成小步，一节一节完成。",
+      "color": "butter",
+      "x": 80,
+      "y": 140,
+      "w": 330,
+      "h": 400,
+      "due": "2026-10-24T15:59:00.000Z",
+      "startAt": "2026-10-24T00:00:00.000Z",
+      "progressValue": 6,
+      "progressTarget": 10,
+      "progressUnit": "节",
+      "completed": false
+    },
+    {
+      "id": "1cca1864-8568-4608-989f-84dff15e3983",
+      "kind": "timer",
+      "title": "四级考试 · 日期示例",
+      "body": "演示日期，可按自己的考试安排修改。",
+      "color": "blue",
+      "x": 490,
+      "y": 140,
+      "w": 330,
+      "h": 400,
+      "due": "2026-12-06T01:00:00.000Z",
+      "startAt": "2026-10-07T01:00:00.000Z",
+      "progressValue": 0,
+      "progressTarget": 0,
+      "progressUnit": "项",
+      "completed": false
+    },
+    {
+      "id": "f7547da4-e6f3-4f90-89de-d05b1db60bad",
+      "kind": "task",
+      "title": "复习清单 · 逾期示例",
+      "body": "",
+      "color": "sage",
+      "x": 900,
+      "y": 140,
+      "w": 310,
+      "h": 400,
+      "items": [
+        {
+          "id": "d694ee8f-91c8-4f42-834c-0ab0c0b6ff31",
+          "text": "整理最近做过的错题",
+          "done": true
+        },
+        {
+          "id": "d3b077b1-d547-45c4-81c6-df3df3b9fe70",
+          "text": "安排本周的听力练习",
+          "done": false
+        },
+        {
+          "id": "0fa78809-b1b8-4ec9-a820-46a853688a1f",
+          "text": "打印一套模拟试卷",
+          "done": false
+        }
+      ],
+      "due": "2026-10-23T10:00:00.000Z",
+      "startAt": "2026-10-19T00:00:00.000Z"
+    }
+  ],
+  "groups": [],
+  "edges": [],
+  "view": null,
+  "updatedAt": "2026-10-24T05:32:55.947Z"
+}

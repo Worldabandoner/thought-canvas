@@ -1,4 +1,5 @@
 import { COLORS, LIMITS, uid, clone, clamp, screenToWorld, zoomAt, containedNodes, boundsOf, createGroupCopy, edgeGeometry, makeNode, createBoard, validateBoard, History } from './model.js';
+import { normalizeDate, localDateTime, deadlineState, deadlineLabel, durationParts, scheduledNodes, isFinished } from './model.js';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -112,15 +113,47 @@ function paintCard(element, item, group = false) {
   element.dataset.id = item.id;
   element.classList.toggle('selected', selected?.id === item.id && selected?.type === (group ? 'group' : 'node'));
 }
+function progressBar(value, label, className = '') {
+  const bar = el('div', `time-progress-track ${className}`), fill = el('span');
+  bar.setAttribute('role', 'progressbar'); bar.setAttribute('aria-label', label); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100'); bar.setAttribute('aria-valuenow', String(Math.floor(value * 100)));
+  fill.style.width = `${value * 100}%`; bar.append(fill); return bar;
+}
+function renderTimeSlot(node, slot, now = Date.now()) {
+  const state = deadlineState(node, now); slot.replaceChildren();
+  if (!state) { slot.hidden = true; return; }
+  slot.hidden = false; const card = slot.closest('.canvas-node'); if (card) card.dataset.urgency = state.status;
+  const large = node.kind === 'timer', parts = durationParts(state.remaining);
+  if (large) {
+    const caption = el('div', 'countdown-caption', state.completed ? '一件事，有了圆满的句号' : state.remaining <= 0 ? '已经到期' : state.notStarted ? '尚未开始 · 距目标还有' : '距离目标还有');
+    const hero = el('div', 'countdown-hero'); hero.append(el('strong', '', state.completed ? '✓' : parts.value), el('span', '', state.completed ? '已完成' : parts.unit));
+    slot.append(caption, hero);
+    if (!state.completed && parts.detail) slot.append(el('div', 'countdown-detail', parts.detail));
+  } else slot.append(el('div', 'deadline-pill', deadlineLabel(node, now)));
+  slot.append(el('div', 'deadline-date', `${large ? '目标' : '截止'} ${localDateTime(new Date(state.due)).replace('T', ' ').replaceAll('-', '.')}`));
+  if (state.elapsed !== null) {
+    const row = el('div', 'time-progress-label'); row.append(el('span', '', '时间已过'), el('span', '', `${Math.floor(state.elapsed * 100)}%`));
+    slot.append(row, progressBar(state.elapsed, '时间已过', 'elapsed-track'));
+  }
+}
+function renderNumericProgress(n) {
+  const section = el('div', 'numeric-progress'), row = el('div', 'time-progress-label');
+  const counts = el('span', '', `${n.progressValue} / ${n.progressTarget} ${n.progressUnit || '项'}`);
+  row.append(el('span', '', '完成进度'), counts);
+  const controls = el('div', 'progress-stepper');
+  for (const [action, text, label, disabled] of [['progress-minus', '−', '减少完成数量', n.progressValue <= 0], ['progress-plus', '+', '增加完成数量', n.progressValue >= n.progressTarget]]) {
+    const button = el('button', 'small-icon', text); button.dataset.action = action; button.setAttribute('aria-label', label); button.title = label; button.disabled = disabled; controls.append(button);
+  }
+  section.append(row, progressBar(n.progressValue / n.progressTarget, '完成进度', 'completion-track'), controls); return section;
+}
 function renderNodes() {
   const fragment = document.createDocumentFragment();
   for (const n of board.nodes) {
     const card = el('article', `canvas-node ${n.kind}-node`);
     paintCard(card, n);
-    card.tabIndex = 0; card.setAttribute('aria-label', `${n.kind === 'task' ? '待办' : n.kind === 'image' ? '图片' : '便签'}：${n.title}`);
+    card.tabIndex = 0; card.setAttribute('aria-label', `${n.kind === 'timer' ? '时间卡片' : n.kind === 'task' ? '待办' : n.kind === 'image' ? '图片' : '便签'}：${n.title}`);
     card.classList.toggle('connect-source', connectFrom === n.id);
     const top = el('div', 'node-top'), type = el('span', 'node-type');
-    type.append(icon(n.kind === 'task' ? 'task' : n.kind === 'image' ? 'image' : 'note'), el('span', '', n.kind === 'task' ? '让想法发生' : n.kind === 'image' ? '灵感切片' : '一页思绪'));
+    type.append(icon(n.kind === 'timer' ? 'clock' : n.kind === 'task' ? 'task' : n.kind === 'image' ? 'image' : 'note'), el('span', '', n.kind === 'timer' ? '给时间一个位置' : n.kind === 'task' ? '让想法发生' : n.kind === 'image' ? '灵感切片' : '一页思绪'));
     const more = el('button', 'node-more'); more.append(icon('more')); more.dataset.action = 'edit'; more.title = '编辑卡片'; more.setAttribute('aria-label', `编辑 ${n.title}`); top.append(type, more);
     const content = el('div', 'node-content'), title = el('h2', 'node-title', n.title);
     if (n.kind === 'image') {
@@ -128,6 +161,10 @@ function renderNodes() {
     } else {
       content.append(title);
       if (n.body) content.append(el('p', 'node-body', n.body));
+      if (n.kind === 'timer' || n.kind === 'task' && n.due) {
+        const timeSlot = el('div', 'time-details'); content.append(timeSlot); renderTimeSlot(n, timeSlot);
+      }
+      if (n.kind === 'timer' && n.progressTarget > 0) content.append(renderNumericProgress(n));
       if (n.kind === 'task') {
         const list = el('div', 'task-list');
         for (const item of n.items) {
@@ -136,13 +173,15 @@ function renderNodes() {
           check.setAttribute('aria-label', item.text); row.append(check, el('span', '', item.text)); list.append(row);
         }
         content.append(list);
-        if (n.due) {
-          const today = new Date(); const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-          content.append(el('div', `task-due${n.due < localDate && n.items.some(t => !t.done) ? ' overdue' : ''}`, `截止于 ${n.due.replaceAll('-', '.')}`));
-        }
       }
     }
     card.append(top, content);
+    if (n.kind === 'timer') {
+      const footer = el('div', 'node-footer timer-footer'), button = el('button', 'timer-complete');
+      const achieved = n.progressTarget > 0 && n.progressValue >= n.progressTarget;
+      button.textContent = achieved ? '调整完成进度' : n.completed ? '重新开启' : '标记完成'; button.dataset.action = achieved ? 'edit' : 'toggle-timer';
+      footer.append(el('span', '', isFinished(n) ? '已完成' : '日期与进度均可编辑'), button); card.append(footer);
+    }
     if (n.kind === 'task') {
       const footer = el('div', 'node-footer'), progress = el('div', 'task-progress'), fill = el('span');
       const done = n.items.filter(t => t.done).length;
@@ -151,6 +190,7 @@ function renderNodes() {
     const resize = el('span', 'resize-handle'); resize.dataset.resize = 'true'; resize.title = '拖动调整尺寸'; card.append(resize); fragment.append(card);
   }
   $('#node-layer').replaceChildren(fragment); applySearch();
+  refreshTemporal(false);
 }
 function renderGroups() {
   const fragment = document.createDocumentFragment();
@@ -180,18 +220,33 @@ function renderEdges() {
 }
 function renderOutline() {
   const list = $('#outline-list'), fragment = document.createDocumentFragment();
-  const all = filter === 'tasks' ? board.nodes.filter(n => n.kind === 'task') : [...board.groups, ...board.nodes];
+  const scheduled = scheduledNodes(board.nodes);
+  const all = filter === 'upcoming' ? scheduled : filter === 'tasks' ? board.nodes.filter(n => n.kind === 'task') : [...board.groups, ...board.nodes];
   const matches = all.filter(matchesSearch);
   for (const n of matches) {
-    const button = el('button', `outline-item${selected?.id === n.id ? ' selected' : ''}${n.kind === 'task' && n.items.length && n.items.every(t => t.done) ? ' done' : ''}`);
+    const button = el('button', `outline-item${selected?.id === n.id ? ' selected' : ''}${isFinished(n) ? ' done' : ''}${filter === 'upcoming' ? ' scheduled-outline' : ''}`);
+    button.dataset.id = n.id;
     if (n.kind === 'note') { const dot = el('i', 'outline-dot'); dot.style.background = COLORS[n.color].swatch; button.append(dot); }
-    else button.append(icon(n.kind === 'group' ? 'group' : n.kind === 'task' ? 'task' : 'image'));
-    button.append(el('span', '', n.title)); button.title = n.title; button.addEventListener('click', () => { focusItem(n, n.kind === 'group' ? 'group' : 'node'); if (innerWidth < 700) setSidebarCollapsed(true); }); fragment.append(button);
+    else button.append(icon(n.kind === 'timer' ? 'clock' : n.kind === 'group' ? 'group' : n.kind === 'task' ? 'task' : 'image'));
+    const text = el('span', 'outline-item-text'); text.append(el('span', 'outline-item-title', n.title));
+    if (filter === 'upcoming') { text.append(el('small', 'outline-deadline', deadlineLabel(n))); button.dataset.urgency = deadlineState(n).status; }
+    button.append(text); button.title = n.title; button.addEventListener('click', () => { focusItem(n, n.kind === 'group' ? 'group' : 'node'); if (innerWidth < 700) setSidebarCollapsed(true); }); fragment.append(button);
   }
-  if (!matches.length) fragment.append(el('p', 'outline-empty', search ? '没有找到这个想法。' : filter === 'tasks' ? '还没有待办。按 T，在画布上放下一件想做的事。' : '还没有内容，放下第一个想法吧。'));
+  if (!matches.length) fragment.append(el('p', 'outline-empty', search ? '没有找到这个想法。' : filter === 'upcoming' ? '暂时没有待提醒的事项。给待办设置截止时间，或按 C 添加时间卡片。' : filter === 'tasks' ? '还没有待办。按 T，在画布上放下一件想做的事。' : '还没有内容，放下第一个想法吧。'));
   list.replaceChildren(fragment);
   $('#node-count').textContent = board.nodes.length;
   $('#task-count').textContent = board.nodes.filter(n => n.kind === 'task').reduce((sum, n) => sum + n.items.filter(t => !t.done).length, 0);
+  $('#upcoming-count').textContent = scheduled.length;
+}
+function refreshTemporal(updateOutline = true) {
+  const now = Date.now(), byId = new Map(board.nodes.map(n => [n.id, n]));
+  for (const card of $$('.canvas-node')) {
+    const n = byId.get(card.dataset.id), slot = card.querySelector('.time-details'); if (slot && n) renderTimeSlot(n, slot, now);
+  }
+  if (updateOutline) for (const row of $$('.scheduled-outline')) {
+    const n = byId.get(row.dataset.id); if (!n) continue;
+    row.querySelector('.outline-deadline').textContent = deadlineLabel(n, now); row.dataset.urgency = deadlineState(n, now)?.status || 'normal';
+  }
 }
 function matchesSearch(n) { return !search || `${n.title} ${n.body || ''} ${(n.items || []).map(t => t.text).join(' ')}`.toLowerCase().includes(search); }
 function applySearch() {
@@ -224,7 +279,7 @@ function setTool(next) {
   $$('.tool[data-tool]').forEach(button => { button.classList.toggle('active', button.dataset.tool === tool); button.setAttribute('aria-pressed', String(button.dataset.tool === tool)); });
   viewport.className = `viewport tool-${tool}`;
   $$('.connect-source').forEach(n => n.classList.remove('connect-source'));
-  const hints = { note: '在想放的位置点一下，留下一页思绪', task: '在想放的位置点一下，放下一件待办', group: '点击放下一个分组区域，拖动右下角调整大小', connect: '依次点击两张卡片，连接它们的关系', hand: '按住并拖动，探索你的画布' };
+  const hints = { note: '在想放的位置点一下，留下一页思绪', task: '在想放的位置点一下，放下一件待办', timer: '点击你想放的位置，记录一个截止时间或重要日子', group: '点击放下一个分组区域，拖动右下角调整大小', connect: '依次点击两张卡片，连接它们的关系', hand: '按住并拖动，探索你的画布' };
   $('#mode-hint').hidden = !hints[tool]; $('#mode-hint').textContent = hints[tool] || '';
 }
 function connectNode(id) {
@@ -255,22 +310,44 @@ function addTaskEditorRow(item = { id: uid(), text: '', done: false }) {
 }
 function openEditor(item, isNew = false) {
   editing = { item: clone(item), isNew };
-  const labels = { note: '便签', task: '待办', group: '分组', image: '图片' };
+  const labels = { note: '便签', task: '待办', timer: '时间卡片', group: '分组', image: '图片' };
   $('#editor-heading').textContent = `${isNew ? '放下一个' : '编辑'}${labels[item.kind]}`;
   $('#editor-eyebrow').textContent = isNew ? '每个想法，都值得一个位置' : '让思绪，再清楚一点';
   $('#edit-title').value = isNew && item.kind !== 'image' ? '' : item.title;
   $('#edit-title').placeholder = item.title; $('#edit-body').value = item.body || '';
   $('#body-field').hidden = item.kind === 'group' || item.kind === 'image';
   $('#task-fields').hidden = item.kind !== 'task'; $('#image-editor-info').hidden = item.kind !== 'image';
+  const scheduled = item.kind === 'task' || item.kind === 'timer';
+  $('#schedule-fields').hidden = !scheduled; $('#timer-fields').hidden = item.kind !== 'timer';
+  $$('#schedule-fields input').forEach(input => { input.disabled = !scheduled; input.setCustomValidity(''); });
+  $$('#timer-fields input').forEach(input => { input.disabled = item.kind !== 'timer'; input.setCustomValidity(''); });
+  $('#edit-due').required = item.kind === 'timer'; $('#due-optional').textContent = item.kind === 'timer' ? '必填' : '可选';
+  $('#edit-due').value = item.due ? localDateTime(normalizeDate(item.due)) : '';
+  $('#edit-start').value = item.startAt ? localDateTime(normalizeDate(item.startAt)) : '';
+  $('#edit-progress-value').value = item.progressValue || 0; $('#edit-progress-target').value = item.progressTarget || 0;
+  $('#edit-progress-unit').value = item.progressUnit || '项'; $('#edit-completed').checked = item.completed === true;
   $('#edit-task-list').replaceChildren();
-  if (item.kind === 'task') { item.items.forEach(addTaskEditorRow); $('#edit-due').value = item.due || ''; }
+  if (item.kind === 'task') item.items.forEach(addTaskEditorRow);
   draftColor = item.color; renderColorOptions(); $('#editor-dialog').showModal(); $('#edit-title').focus();
 }
 $('#editor-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing) return;
   const item = editing.item; item.title = $('#edit-title').value.trim() || item.title; item.body = $('#edit-body').value.trim(); item.color = draftColor;
+  if (item.kind === 'task' || item.kind === 'timer') {
+    const due = normalizeDate($('#edit-due').value), start = normalizeDate($('#edit-start').value);
+    if ($('#edit-due').value && !due || $('#edit-start').value && !start || due && start && Date.parse(start) >= Date.parse(due)) {
+      $('#edit-due').setCustomValidity('请设置有效时间，且截止时间晚于开始时间'); $('#edit-due').reportValidity(); return;
+    }
+    item.due = due; item.startAt = start;
+  }
+  if (item.kind === 'timer') {
+    const value = Number($('#edit-progress-value').value), target = Number($('#edit-progress-target').value);
+    if (!Number.isSafeInteger(value) || !Number.isSafeInteger(target) || value < 0 || target < 0 || target > 1e6 || value > target) {
+      $('#edit-progress-value').setCustomValidity('已完成数量不能超过目标数量；不显示进度时两项均填 0'); $('#edit-progress-value').reportValidity(); return;
+    }
+    item.progressValue = value; item.progressTarget = target; item.progressUnit = $('#edit-progress-unit').value.trim() || '项'; item.completed = $('#edit-completed').checked;
+  }
   if (item.kind === 'task') {
-    item.due = $('#edit-due').value;
     item.items = [...$('#edit-task-list').children].map(row => ({ id: row.dataset.id, text: row.querySelector('input[type=text]').value.trim(), done: row.querySelector('input[type=checkbox]').checked })).filter(t => t.text);
   }
   if (editing.isNew && !ensureCapacity()) return;
@@ -280,6 +357,9 @@ $('#editor-form').addEventListener('submit', event => {
     selected = { type: item.kind === 'group' ? 'group' : 'node', id: item.id };
   });
   $('#editor-dialog').close(); editing = null;
+});
+for (const id of ['edit-due', 'edit-start', 'edit-progress-value', 'edit-progress-target']) $(`#${id}`).addEventListener('input', () => {
+  $('#edit-due').setCustomValidity(''); $('#edit-progress-value').setCustomValidity('');
 });
 $('#add-task-item').addEventListener('click', () => addTaskEditorRow()?.focus());
 function openEdgeEditor(edge) { editingEdge = edge.id; $('#edge-label').value = edge.label; $('#edge-arrow').checked = edge.arrow; $('#edge-dialog').showModal(); $('#edge-label').focus(); }
@@ -326,7 +406,7 @@ viewport.addEventListener('pointerdown', event => {
   const pan = event.button === 1 || spaceHeld || tool === 'hand';
   if (pan) { startPan(event); return; }
   if (card && tool === 'connect') { connectNode(card.dataset.id); event.preventDefault(); return; }
-  if (!card && !edge && !event.target.closest('.group-title,[data-resize]') && ['note', 'task', 'group'].includes(tool)) { addAt(tool, worldPoint(event)); return; }
+  if (!card && !edge && !event.target.closest('.group-title,[data-resize]') && ['note', 'task', 'timer', 'group'].includes(tool)) { addAt(tool, worldPoint(event)); return; }
   if (edge) { setSelection({ type: 'edge', id: edge.dataset.id }); return; }
   if (card || group) {
     const type = card ? 'node' : 'group', element = card || group;
@@ -379,6 +459,17 @@ viewport.addEventListener('dblclick', event => {
   else if (tool === 'select') addAt('note', worldPoint(event));
 });
 viewport.addEventListener('click', event => {
+  const timerAction = event.target.closest('[data-action="toggle-timer"],[data-action="progress-plus"],[data-action="progress-minus"]');
+  if (timerAction) {
+    const node = board.nodes.find(n => n.id === timerAction.closest('.canvas-node').dataset.id); if (node?.kind !== 'timer') return;
+    mutate(() => {
+      if (timerAction.dataset.action === 'toggle-timer') {
+        node.completed = !node.completed;
+        if (node.completed && node.progressTarget > 0) node.progressValue = node.progressTarget;
+      } else { node.progressValue = clamp(node.progressValue + (timerAction.dataset.action === 'progress-plus' ? 1 : -1), 0, node.progressTarget); node.completed = false; }
+    });
+    return;
+  }
   const edit = event.target.closest('[data-action=edit]'); if (!edit) return;
   const container = edit.closest('.canvas-node,.canvas-group'), group = container.classList.contains('canvas-group');
   const item = (group ? board.groups : board.nodes).find(n => n.id === container.dataset.id);
@@ -469,8 +560,9 @@ $('#empty-add').addEventListener('click', () => addAt('note', centerPoint())); $
 $('#board-title').addEventListener('change', event => { const title = event.target.value.trim() || '未命名画布'; if (title !== board.title) mutate(() => { board.title = title; }); else event.target.value = title; });
 $('#board-title').addEventListener('keydown', event => { if (event.key === 'Enter') event.target.blur(); });
 $('#search-input').addEventListener('input', event => { search = event.target.value.trim().toLowerCase(); renderOutline(); applySearch(); });
-function setFilter(next) { filter = next; $('#overview-btn').classList.toggle('active', next === 'all'); $('#tasks-btn').classList.toggle('active', next === 'tasks'); $('#outline-title').textContent = next === 'tasks' ? '我的待办卡片' : '画布中的内容'; renderOutline(); }
+function setFilter(next) { filter = next; $('#overview-btn').classList.toggle('active', next === 'all'); $('#tasks-btn').classList.toggle('active', next === 'tasks'); $('#upcoming-btn').classList.toggle('active', next === 'upcoming'); $('#outline-title').textContent = next === 'upcoming' ? '未完成事项 · 按截止时间排序' : next === 'tasks' ? '我的待办卡片' : '画布中的内容'; renderOutline(); }
 $('#overview-btn').addEventListener('click', () => { setFilter('all'); fitAll(); }); $('#tasks-btn').addEventListener('click', () => setFilter('tasks'));
+$('#upcoming-btn').addEventListener('click', () => setFilter('upcoming'));
 function setSidebarCollapsed(collapsed) {
   const focusWasInside = $('#sidebar').contains(document.activeElement);
   closeMenu();
@@ -502,7 +594,7 @@ document.addEventListener('keydown', event => {
   else if (event.key === '+' || event.key === '=') zoomBy(1.2);
   else if (event.key === '-') zoomBy(1 / 1.2);
   else {
-    const tools = { v: 'select', h: 'hand', n: 'note', t: 'task', g: 'group', l: 'connect' };
+    const tools = { v: 'select', h: 'hand', n: 'note', t: 'task', c: 'timer', g: 'group', l: 'connect' };
     if (tools[event.key.toLowerCase()]) setTool(tools[event.key.toLowerCase()]);
     else if (event.key.toLowerCase() === 'i') { imagePoint = centerPoint(); $('#image-input').click(); }
   }
@@ -510,7 +602,8 @@ document.addEventListener('keydown', event => {
 document.addEventListener('keyup', event => { if (event.code === 'Space') { spaceHeld = false; if (tool !== 'hand') viewport.classList.remove('tool-hand'); } });
 window.addEventListener('blur', () => { spaceHeld = false; if (tool !== 'hand') viewport.classList.remove('tool-hand'); finishDrag(); });
 window.addEventListener('beforeunload', event => { if (revision > savedRevision) { flushSave(); event.preventDefault(); event.returnValue = ''; } });
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); else refreshTemporal(); });
+window.addEventListener('focus', () => refreshTemporal());
 
 async function init() {
   setSidebarCollapsed(innerWidth < 700);
@@ -521,7 +614,8 @@ async function init() {
   render();
   if (board.view && board.view.width === viewport.clientWidth && board.view.height === viewport.clientHeight) { view = { x: board.view.x, y: board.view.y, zoom: board.view.zoom }; applyView(); }
   else if (viewport.clientWidth < 700 && board.nodes.length) {
-    const first = board.nodes[0]; view = { x: viewport.clientWidth / 2 - (first.x + first.w / 2) * .9, y: 155 - first.y * .9, zoom: .9 }; applyView();
+    const first = board.nodes[0], zoom = clamp(Math.min(.9, (viewport.clientWidth - 36) / first.w, (viewport.clientHeight - 260) / first.h), .25, 1.25);
+    view = { x: viewport.clientWidth / 2 - (first.x + first.w / 2) * zoom, y: 130 - first.y * zoom, zoom }; applyView();
   } else fitAll(false);
   let oldSize = { w: viewport.clientWidth, h: viewport.clientHeight };
   new ResizeObserver(() => {
@@ -533,3 +627,4 @@ async function init() {
   if (!storageBlocked) scheduleSave();
 }
 await init();
+setInterval(() => { if (!document.hidden && !drag && !document.querySelector('dialog[open]')) refreshTemporal(); }, 15000);

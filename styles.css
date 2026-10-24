@@ -72,7 +72,7 @@ a{color:inherit;text-decoration:none}
 .viewport{position:absolute;inset:0;overflow:hidden;touch-action:none;background-image:radial-gradient(circle,#cbd3bf 0.8px,transparent .9px);background-size:22px 22px;outline:none!important}
 .viewport.tool-hand{cursor:grab}
 .viewport.is-panning{cursor:grabbing}
-.viewport.tool-note,.viewport.tool-task,.viewport.tool-group{cursor:crosshair}
+.viewport.tool-note,.viewport.tool-task,.viewport.tool-timer,.viewport.tool-group{cursor:crosshair}
 .viewport.tool-connect .canvas-node{cursor:crosshair}
 .world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
 .edge-layer{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:2}
@@ -118,7 +118,7 @@ a{color:inherit;text-decoration:none}
 .canvas-group{border:1.5px dashed var(--group-border,#cfd8bf);border-radius:18px;background:var(--group-bg,#eef2e640);z-index:0;min-width:280px;min-height:180px;cursor:grab}
 .canvas-group:active{cursor:grabbing}
 .group-hint{position:absolute;top:12px;right:16px;font-size:9px;letter-spacing:.3px;color:var(--group-ink,#8c997c);opacity:.8;pointer-events:none}
-.viewport.tool-note .canvas-group,.viewport.tool-task .canvas-group,.viewport.tool-group .canvas-group{cursor:crosshair}
+.viewport.tool-note .canvas-group,.viewport.tool-task .canvas-group,.viewport.tool-timer .canvas-group,.viewport.tool-group .canvas-group{cursor:crosshair}
 .canvas-group.selected{outline:2px solid #769367;outline-offset:4px}
 .group-title{position:absolute;left:18px;top:-16px;background:var(--canvas);padding:6px 12px;display:flex;align-items:center;gap:8px;border-radius:6px;color:var(--group-ink,#8c997c);font-size:11px;letter-spacing:1px;cursor:grab;max-width:85%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .group-title svg{width:13px;height:13px}
@@ -258,3 +258,45 @@ textarea.text-field{resize:vertical;min-height:100px;max-height:350px}
 .space-label>span{display:inline}
 .canvas-heading p{margin-left:35px}
 }
+
+/* Time reminders stay in their spatial position; urgency changes only their appearance. */
+.canvas-node[data-urgency]{--deadline-ink:#6b8760;--deadline-soft:#edf3e6}
+.canvas-node[data-urgency=soon]{--deadline-ink:#ac813b;--deadline-soft:#faf0d9;border-color:#e5cf9f}
+.canvas-node[data-urgency=urgent],.canvas-node[data-urgency=overdue]{--deadline-ink:#b26b56;--deadline-soft:#f8e9e1;border-color:#e6bfb0}
+.canvas-node[data-urgency=completed]{--deadline-ink:#69845b;--deadline-soft:#eaf2df}
+.time-details{margin:14px 0 4px;color:var(--deadline-ink,#6b8760);font-variant-numeric:tabular-nums}
+.countdown-caption{font-size:10px;letter-spacing:.6px;opacity:.9}
+.countdown-hero{display:flex;align-items:baseline;gap:9px;margin:7px 0 6px;line-height:1.2;flex-wrap:wrap}
+.countdown-hero strong{font-size:40px;font-weight:550;letter-spacing:-1.5px}
+.countdown-hero>span{font-size:11px;letter-spacing:.5px}
+.countdown-detail{font-size:10px;margin-bottom:8px;opacity:.8}
+.deadline-date{font-size:10px;line-height:1.8;color:var(--card-text);margin-top:5px}
+.deadline-pill{display:inline-flex;font-size:10px;background:var(--deadline-soft);color:var(--deadline-ink);padding:5px 8px;border-radius:5px}
+.time-progress-label{display:flex;justify-content:space-between;gap:8px;font-size:10px;line-height:1.7;margin:12px 0 6px}
+.time-progress-label>span:last-child{font-variant-numeric:tabular-nums}
+.time-progress-track{height:5px;border-radius:5px;background:#88987918;overflow:hidden}
+.time-progress-track>span{display:block;height:100%;border-radius:5px;background:var(--deadline-ink,#83a171);transition:width .15s}
+.elapsed-track{height:3px}
+.elapsed-track>span{opacity:.6}
+.numeric-progress{position:relative;margin-top:17px;color:var(--card-ink)}
+.numeric-progress .time-progress-label{margin-top:0}
+.completion-track>span{background:#87a276}
+.progress-stepper{display:flex;justify-content:flex-end;gap:4px;margin-top:6px}
+.progress-stepper .small-icon{height:24px;width:26px;border:1px solid var(--card-border);background:#ffffff66;font-size:16px}
+.timer-footer{gap:10px;font-size:9px;padding-bottom:14px}
+.timer-complete{font-size:10px;color:var(--deadline-ink,#6b8760);padding:5px 8px;border:1px solid var(--card-border);border-radius:5px;background:#ffffff80;white-space:nowrap}
+.timer-complete:hover{background:#fff}
+.timer-node .node-body{font-size:11px;line-height:1.7}
+.timer-node .node-title{font-size:17px;margin-bottom:6px}
+.task-node .time-details{margin-top:12px}
+.progress-inputs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.progress-inputs>label{font-size:10px;color:#8a987e;min-width:0}
+.progress-inputs .text-field{margin-top:6px;min-width:0;padding:9px 10px}
+.outline-item-text{display:block;min-width:0;flex:1}
+.outline-item-title{display:block;overflow:hidden;text-overflow:ellipsis}
+.scheduled-outline{align-items:flex-start;padding-top:11px;padding-bottom:11px}
+.scheduled-outline>svg{margin-top:2px}
+.outline-deadline{display:block;font-size:9px;color:#95a286;margin-top:5px;line-height:1.6}
+.scheduled-outline[data-urgency=soon] .outline-deadline{color:#ac813b}
+.scheduled-outline[data-urgency=urgent] .outline-deadline,.scheduled-outline[data-urgency=overdue] .outline-deadline{color:#b26b56}
+@media(max-width:700px){.tool{width:32px}.progress-inputs{gap:7px}.progress-inputs .text-field{padding:8px 7px}.countdown-hero strong{font-size:36px}}

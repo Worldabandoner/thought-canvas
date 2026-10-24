@@ -1,3 +1,68 @@
+export const MINUTE = 60_000;
+export const HOUR = 60 * MINUTE;
+export const DAY = 24 * HOUR;
+
+// Date-only backups used the end of the selected local day. New deadlines are
+// stored as UTC instants; datetime-local inputs are interpreted on this device.
+export function normalizeDate(value) {
+  if (typeof value !== 'string' || !value) return '';
+  const local = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value);
+  if (local) {
+    const [, yy, mm, dd, hh, min] = local;
+    const y = +yy, m = +mm - 1, d = +dd, h = hh === undefined ? 23 : +hh, minute = min === undefined ? 59 : +min;
+    if (y < 1900 || y > 9999) return '';
+    const date = new Date(y, m, d, h, minute, hh === undefined ? 59 : 0, hh === undefined ? 999 : 0);
+    if (date.getFullYear() !== y || date.getMonth() !== m || date.getDate() !== d || date.getHours() !== h || date.getMinutes() !== minute) return '';
+    return date.toISOString();
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return '';
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value && +value.slice(0, 4) >= 1900 ? value : '';
+}
+export function localDateTime(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+export function deadlineTimestamp(node) { const iso = normalizeDate(node.due); return iso ? Date.parse(iso) : null; }
+export function isFinished(node) {
+  if (node.kind === 'task') return node.items.length > 0 && node.items.every(t => t.done);
+  if (node.kind === 'timer') return node.completed === true || (node.progressTarget > 0 && node.progressValue >= node.progressTarget);
+  return false;
+}
+export function deadlineState(node, now = Date.now()) {
+  const due = deadlineTimestamp(node);
+  if (due === null) return null;
+  const remaining = due - now, completed = isFinished(node);
+  const start = normalizeDate(node.startAt), startMs = start ? Date.parse(start) : null;
+  return {
+    due, remaining, completed,
+    status: completed ? 'completed' : remaining <= 0 ? 'overdue' : remaining <= 2 * HOUR ? 'urgent' : remaining <= DAY ? 'soon' : 'normal',
+    elapsed: startMs !== null && startMs < due ? Math.max(0, Math.min(1, (now - startMs) / (due - startMs))) : null,
+    notStarted: startMs !== null && now < startMs,
+  };
+}
+export function durationParts(milliseconds) {
+  const value = Math.abs(milliseconds);
+  if (value < MINUTE) return { value: value === 0 ? '0' : '不足 1', unit: '分钟', detail: '' };
+  if (value >= DAY) return { value: String(Math.floor(value / DAY)), unit: '天', detail: `另有 ${Math.floor(value % DAY / HOUR)} 小时 ${Math.floor(value % HOUR / MINUTE)} 分钟` };
+  if (value >= HOUR) return { value: `${Math.floor(value / HOUR)}:${String(Math.floor(value % HOUR / MINUTE)).padStart(2, '0')}`, unit: '小时 : 分钟', detail: '' };
+  return { value: String(Math.floor(value / MINUTE)), unit: '分钟', detail: '' };
+}
+export function deadlineLabel(node, now = Date.now()) {
+  const state = deadlineState(node, now); if (!state) return '';
+  if (state.completed) return '已完成';
+  const parts = durationParts(state.remaining);
+  const prefix = state.remaining <= 0 ? node.kind === 'timer' ? '已到期' : '已逾期' : '剩余';
+  const duration = parts.unit === '小时 : 分钟' ? `${parts.value.split(':')[0]} 小时 ${Number(parts.value.split(':')[1])} 分` : `${parts.value} ${parts.unit}`;
+  return `${prefix} ${duration}`;
+}
+export function scheduledNodes(nodes, now = Date.now()) {
+  return nodes.filter(n => deadlineState(n, now) && !isFinished(n)).sort((a, b) => deadlineTimestamp(a) - deadlineTimestamp(b));
+}
+
+
 export const COLORS = {
   butter: { name: '柔黄', bg: '#fffbed', border: '#ece5c6', ink: '#69603c', text: '#99906e', accent: '#b0a271', swatch: '#f4e9b6' },
   sage: { name: '鼠尾草', bg: '#f5f9ef', border: '#dce6ce', ink: '#4e6542', text: '#819573', accent: '#91a27b', swatch: '#dce8cb' },
@@ -67,13 +132,15 @@ export function edgeGeometry(a, b) {
   return { d: `M${p.x},${p.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${q.x},${q.y}`, label: { x: (p.x + 3 * c1.x + 3 * c2.x + q.x) / 8, y: (p.y + 3 * c1.y + 3 * c2.y + q.y) / 8 - 9 } };
 }
 export function makeNode(kind, point) {
-  return { id: uid(), kind, x: Math.round(point.x), y: Math.round(point.y), w: kind === 'group' ? 500 : 290, h: kind === 'group' ? 360 : kind === 'task' ? 290 : 230,
-    title: kind === 'group' ? '新的分组' : kind === 'task' ? '一件想做的事' : kind === 'image' ? '一张灵感图片' : '一个新的想法', body: '', color: kind === 'task' || kind === 'group' ? 'sage' : kind === 'image' ? 'paper' : 'butter',
-    ...(kind === 'task' ? { items: [{ id: uid(), text: '迈出第一小步', done: false }], due: '' } : {}),
+  return { id: uid(), kind, x: Math.round(point.x), y: Math.round(point.y), w: kind === 'group' ? 500 : kind === 'timer' ? 320 : 290, h: kind === 'group' ? 360 : kind === 'timer' ? 390 : kind === 'task' ? 320 : 230,
+    title: kind === 'group' ? '新的分组' : kind === 'timer' ? '一件值得期待的事' : kind === 'task' ? '一件想做的事' : kind === 'image' ? '一张灵感图片' : '一个新的想法', body: '', color: kind === 'timer' ? 'blue' : kind === 'task' || kind === 'group' ? 'sage' : kind === 'image' ? 'paper' : 'butter',
+    ...(['task', 'timer'].includes(kind) ? { due: '', startAt: new Date().toISOString() } : {}),
+    ...(kind === 'task' ? { items: [{ id: uid(), text: '迈出第一小步', done: false }] } : {}),
+    ...(kind === 'timer' ? { progressValue: 0, progressTarget: 0, progressUnit: '项', completed: false } : {}),
   };
 }
 export function createBoard(empty = false) {
-  const board = { version: 1, id: uid(), title: '我的第一张画布', nodes: [], groups: [], edges: [], view: null, updatedAt: new Date().toISOString() };
+  const board = { version: 2, id: uid(), title: '我的第一张画布', nodes: [], groups: [], edges: [], view: null, updatedAt: new Date().toISOString() };
   if (empty) return board;
   board.nodes = [
     { id: 'seed-start', kind: 'note', x: 100, y: 155, w: 286, h: 235, title: '把脑中的画面，\n放在这里。', body: '一个念头、一件小事，\n或一个还没想清楚的问题。\n\n让它先有位置，答案慢慢长出来。', color: 'butter' },
@@ -90,7 +157,7 @@ export function createBoard(empty = false) {
 // Import only the documented schema. Rebuild every object rather than trusting arbitrary JSON.
 export function validateBoard(raw) {
   const fail = message => { throw new Error(`画布文件无效：${message}`); };
-  if (!raw || typeof raw !== 'object' || raw.version !== 1) fail('不支持的文件版本');
+  if (!raw || typeof raw !== 'object' || ![1, 2].includes(raw.version)) fail('不支持的文件版本');
   const str = (v, max, fallback = '') => typeof v === 'string' ? v.slice(0, max) : fallback;
   const number = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fail('位置或尺寸超出范围');
   if (!Array.isArray(raw.nodes) || !Array.isArray(raw.groups) || !Array.isArray(raw.edges)) fail('缺少内容列表');
@@ -99,7 +166,7 @@ export function validateBoard(raw) {
   function item(n, group) {
     if (!n || typeof n !== 'object' || typeof n.id !== 'string' || !n.id || n.id.length > 100 || ids.has(n.id)) fail('内容 ID 重复或缺失');
     ids.add(n.id);
-    if (group ? n.kind !== 'group' : !['note', 'task', 'image'].includes(n.kind)) fail('未知的卡片类型');
+    if (group ? n.kind !== 'group' : !['note', 'task', 'image', 'timer'].includes(n.kind)) fail('未知的卡片类型');
     const result = { id: n.id, kind: n.kind, title: str(n.title, 160, '未命名'), body: str(n.body, 20000), color: Object.hasOwn(COLORS, n.color) ? n.color : 'butter', x: number(n.x, -1e7, 1e7), y: number(n.y, -1e7, 1e7), w: number(n.w, group ? 280 : 200, 5000), h: number(n.h, group ? 180 : 130, 5000) };
     if (n.kind === 'task') {
       if (!Array.isArray(n.items) || n.items.length > 200) fail('待办项格式错误');
@@ -107,7 +174,20 @@ export function validateBoard(raw) {
         if (!t || typeof t !== 'object') fail('待办项格式错误');
         return { id: uid(), text: str(t.text, 1000), done: t.done === true };
       });
-      result.due = /^\d{4}-\d{2}-\d{2}$/.test(n.due) ? n.due : '';
+    }
+    if (n.kind === 'task' || n.kind === 'timer') {
+      result.due = normalizeDate(n.due);
+      result.startAt = normalizeDate(n.startAt);
+      if (n.due && !result.due) fail('截止时间格式错误');
+      if (n.startAt && !result.startAt) fail('开始时间格式错误');
+      if (result.due && result.startAt && Date.parse(result.startAt) >= Date.parse(result.due)) fail('开始时间必须早于截止时间');
+    }
+    if (n.kind === 'timer') {
+      if (!result.due) fail('时间卡片缺少目标时间');
+      const value = n.progressValue ?? 0, target = n.progressTarget ?? 0;
+      if (!Number.isSafeInteger(value) || !Number.isSafeInteger(target) || value < 0 || target < 0 || target > 1e6 || value > target) fail('完成进度格式错误');
+      result.progressValue = value; result.progressTarget = target;
+      result.progressUnit = str(n.progressUnit, 12, '项'); result.completed = n.completed === true;
     }
     if (n.kind === 'image') {
       if (typeof n.src !== 'string' || n.src.length > LIMITS.maxImageLength || !(n.src === './assets/landscape.svg' || /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/.test(n.src))) fail('图片格式不受支持');
@@ -123,7 +203,7 @@ export function validateBoard(raw) {
     return { id: e.id, from: e.from, to: e.to, label: str(e.label, 80), arrow: e.arrow === true };
   });
   const view = raw.view && typeof raw.view.x === 'number' && Number.isFinite(raw.view.x) && Math.abs(raw.view.x) <= 1e8 && typeof raw.view.y === 'number' && Number.isFinite(raw.view.y) && Math.abs(raw.view.y) <= 1e8 && typeof raw.view.zoom === 'number' && Number.isFinite(raw.view.zoom) ? { x: raw.view.x, y: raw.view.y, zoom: clamp(raw.view.zoom, LIMITS.minZoom, LIMITS.maxZoom), width: typeof raw.view.width === 'number' && Number.isFinite(raw.view.width) ? raw.view.width : 0, height: typeof raw.view.height === 'number' && Number.isFinite(raw.view.height) ? raw.view.height : 0 } : null;
-  return { version: 1, id: str(raw.id, 100, uid()), title: str(raw.title, 80, '未命名画布'), nodes, groups, edges, view, updatedAt: str(raw.updatedAt, 100, new Date().toISOString()) };
+  return { version: 2, id: str(raw.id, 100, uid()), title: str(raw.title, 80, '未命名画布'), nodes, groups, edges, view, updatedAt: str(raw.updatedAt, 100, new Date().toISOString()) };
 }
 export class History {
   constructor(limit = 50) { this.limit = limit; this.past = []; this.future = []; }
