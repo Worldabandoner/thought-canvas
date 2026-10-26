@@ -211,3 +211,38 @@ export class History {
   undo(board) { if (!this.past.length) return null; this.future.push(clone(board)); return this.past.pop(); }
   redo(board) { if (!this.future.length) return null; this.past.push(clone(board)); return this.future.pop(); }
 }
+
+// A library has its own version so individual v1/v2 canvas backups stay compatible.
+export const LIBRARY_FORMAT = 'thought-canvas-library';
+export const MAX_BOARDS = 100;
+export function boardEntry(board, now = new Date().toISOString()) {
+  return { board, createdAt: now, openedAt: now, trashedAt: null };
+}
+export function createLibrary(board = createBoard()) {
+  return { format: LIBRARY_FORMAT, version: 1, boards: [boardEntry(board)], lastBoardId: board.id, autoOpenLast: false };
+}
+export function validateLibrary(raw) {
+  if (!raw || raw.format !== LIBRARY_FORMAT || raw.version !== 1 || !Array.isArray(raw.boards) || raw.boards.length > MAX_BOARDS) throw new Error('画布库格式无效或画布超过 100 张');
+  const ids = new Set(), now = new Date().toISOString();
+  const boards = raw.boards.map(entry => {
+    if (typeof entry?.board?.id !== 'string' || !entry.board.id || entry.board.id.length > 100) throw new Error('画布库中的画布 ID 缺失或无效');
+    const board = validateBoard(entry?.board);
+    if (!board.id || ids.has(board.id)) throw new Error('画布库中的画布 ID 重复或缺失');
+    ids.add(board.id);
+    if (entry.trashedAt != null && !normalizeDate(entry.trashedAt)) throw new Error('回收站记录无效');
+    return { board, createdAt: normalizeDate(entry.createdAt) || now, openedAt: normalizeDate(entry.openedAt) || now, trashedAt: entry.trashedAt || null };
+  });
+  return { format: LIBRARY_FORMAT, version: 1, boards, lastBoardId: boards.some(e => e.board.id === raw.lastBoardId && !e.trashedAt) ? raw.lastBoardId : null, autoOpenLast: raw.autoOpenLast === true };
+}
+export function prepareImport(raw, existingCount = 0) {
+  const entries = raw?.format === LIBRARY_FORMAT ? validateLibrary(raw).boards : [boardEntry(validateBoard(raw))];
+  if (!entries.length) throw new Error('备份中没有画布');
+  if (existingCount + entries.length > MAX_BOARDS) throw new Error('画布库最多保存 100 张画布（含回收站），请先导出并清理不需要的画布');
+  // New canvas identities make repeated imports additive. Node IDs are scoped to a canvas.
+  return entries.map(entry => ({ ...entry, board: { ...entry.board, id: uid() } }));
+}
+export function libraryReminders(library, currentBoardId = null) {
+  return library.boards.filter(e => !e.trashedAt && (!currentBoardId || e.board.id === currentBoardId))
+    .flatMap(e => scheduledNodes(e.board.nodes).map(node => ({ node, boardId: e.board.id, boardTitle: e.board.title })))
+    .sort((a, b) => deadlineTimestamp(a.node) - deadlineTimestamp(b.node));
+}

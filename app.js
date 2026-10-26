@@ -1,5 +1,6 @@
 import { COLORS, LIMITS, uid, clone, clamp, screenToWorld, zoomAt, containedNodes, boundsOf, createGroupCopy, edgeGeometry, makeNode, createBoard, validateBoard, History } from './model.js';
 import { normalizeDate, localDateTime, deadlineState, deadlineLabel, durationParts, scheduledNodes, isFinished } from './model.js';
+import { createLibrary, validateLibrary, boardEntry, prepareImport, libraryReminders, MAX_BOARDS } from './model.js';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -9,6 +10,9 @@ let board = createBoard(), view = { x: 0, y: 0, zoom: 1 }, selected = null, tool
 let drag = null, spaceHeld = false, filter = 'all', search = '', editing = null, editingEdge = null, draftColor = 'butter';
 let imagePoint = null, toastTimer, saveTimer, revision = 0, savedRevision = 0, savePromise = null, db = null, storageBlocked = false;
 let history = new History(40);
+let library = createLibrary(board), storageToken = null, libraryTrash = false, nameTarget = null, navigationBusy = false, pendingImages = 0;
+const homeOpen = () => !$('#library-page').hidden;
+function syncBoard() { const entry = library.boards.find(e => e.board.id === board.id); if (entry) entry.board = board; }
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -26,7 +30,7 @@ function svgEl(tag, attrs) {
   return node;
 }
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false; toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 4200); }
-function status(text, state = '') { $('#save-status').textContent = text; $('#save-dot').className = `status-dot ${state}`; }
+function status(text, state = '') { $('#save-status').textContent = text; $('#library-status').textContent = text; $('#save-dot').className = `status-dot ${state}`; }
 function currentItem() { return !selected ? null : (selected.type === 'edge' ? board.edges : selected.type === 'group' ? board.groups : board.nodes).find(n => n.id === selected.id); }
 function localPoint(event) { const r = viewport.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
 function worldPoint(event) { return screenToWorld(localPoint(event), view); }
@@ -42,46 +46,208 @@ async function openStorage() {
     request.onblocked = () => reject(new Error('本地数据库被其他窗口占用'));
   });
   db.onversionchange = () => { db.close(); storageBlocked = true; status('数据库已更新，请刷新页面', 'error'); };
-  return new Promise((resolve, reject) => {
-    const request = db.transaction('boards', 'readonly').objectStore('boards').get('current');
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+  const read = key => new Promise((resolve, reject) => {
+    const request = db.transaction('boards', 'readonly').objectStore('boards').get(key);
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
   });
+  const stored = await read('library');
+  if (stored !== undefined) { storageToken = stored.storageToken || null; return validateLibrary(stored); }
+  const legacy = await read('current');
+  return createLibrary(legacy === undefined ? createBoard() : validateBoard(legacy));
 }
 function writeStorage(snapshot) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('boards', 'readwrite');
-    tx.objectStore('boards').put(snapshot, 'current');
-    tx.oncomplete = resolve;
+    const store = tx.objectStore('boards'), request = store.get('library'), nextToken = uid();
+    let conflict = false;
+    request.onsuccess = () => {
+      // Compare inside the same transaction: another tab must never silently lose data.
+      if ((request.result?.storageToken || null) !== storageToken) { conflict = true; tx.abort(); return; }
+      store.put({ ...snapshot, storageToken: nextToken }, 'library');
+    };
+    tx.oncomplete = () => { storageToken = nextToken; resolve(); };
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('保存被中断'));
+    tx.onabort = () => reject(conflict ? new Error('其他窗口已更新画布库。请导出当前备份，再刷新读取最新内容。') : tx.error || new Error('保存被中断'));
   });
 }
-function scheduleSave() {
-  board.view = { ...view, width: viewport.clientWidth, height: viewport.clientHeight }; board.updatedAt = new Date().toISOString(); revision++;
+function scheduleSave(captureBoard = true) {
+  if (captureBoard) { board.view = { ...view, width: viewport.clientWidth, height: viewport.clientHeight }; board.updatedAt = new Date().toISOString(); }
+  syncBoard(); revision++;
   status(storageBlocked ? '保存不可用，请导出备份' : '正在保存…', storageBlocked ? 'error' : 'pending');
   clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 300);
 }
 async function flushSave() {
   clearTimeout(saveTimer);
   if (savePromise) return savePromise;
-  if (storageBlocked || !db) return;
-  savePromise = (async () => {
+  if (storageBlocked || !db || savedRevision >= revision) return;
+  const pending = (async () => {
     try {
       while (savedRevision < revision) {
         const target = revision;
-        await writeStorage(clone(board));
+        syncBoard(); await writeStorage(clone(library));
         savedRevision = target;
       }
       status('所有改动已保存在此浏览器');
     } catch (error) {
-      status('保存失败，请导出备份', 'error'); toast('本地保存失败，可能是浏览器空间不足。请立即导出备份。');
+      if (error.message.includes('其他窗口')) storageBlocked = true;
+      status('保存失败，请导出备份', 'error'); toast(error.message.includes('其他窗口') ? error.message : '本地保存失败，可能是浏览器空间不足。请立即导出整个画布库备份。');
       console.error('本地保存失败', error);
-    } finally { savePromise = null; }
+    }
   })();
-  return savePromise;
+  savePromise = pending;
+  try { await pending; } finally { if (savePromise === pending) savePromise = null; }
 }
 function mutate(fn) { history.push(board); fn(); render(); scheduleSave(); }
+
+async function saveBeforeNavigation() {
+  if (pendingImages) { toast('图片仍在处理中，请稍候再切换画布'); return false; }
+  finishDrag(); if (!homeOpen()) commitBoardTitle(); syncBoard(); await flushSave();
+  if (storageBlocked || !db || savedRevision < revision) { toast('画布尚未保存成功，请先导出整个画布库备份，再重试或刷新'); return false; }
+  return true;
+}
+async function navigate(action) {
+  if (navigationBusy) return false;
+  navigationBusy = true;
+  try { if (!await saveBeforeNavigation()) return false; return await action() !== false; }
+  catch (error) { toast(error.message); return false; }
+  finally { navigationBusy = false; }
+}
+async function persistLibrary() { scheduleSave(false); await flushSave(); return savedRevision === revision && !storageBlocked; }
+function restoreView() {
+  if (board.view) {
+    view = { x: board.view.x + (viewport.clientWidth - (board.view.width || viewport.clientWidth)) / 2, y: board.view.y + (viewport.clientHeight - (board.view.height || viewport.clientHeight)) / 2, zoom: board.view.zoom };
+    applyView();
+  } else if (viewport.clientWidth < 700 && board.nodes.length) {
+    const first = board.nodes[0], zoom = clamp(Math.min(.9, (viewport.clientWidth - 36) / first.w, (viewport.clientHeight - 260) / first.h), .25, 1.25);
+    view = { x: viewport.clientWidth / 2 - (first.x + first.w / 2) * zoom, y: 130 - first.y * zoom, zoom }; applyView();
+  } else fitAll(false);
+}
+function activateBoard(entry, nodeId = null, keepFilter = false) {
+  board = entry.board; history = new History(40); selected = null; connectFrom = null; search = ''; spaceHeld = false;
+  $('#search-input').value = ''; setTool('select'); closeMenu();
+  $('#library-page').hidden = true; $('.app-layout').inert = false; $('.app-layout').removeAttribute('aria-hidden');
+  setFilter(keepFilter ? filter : 'all'); render(); restoreView();
+  if (nodeId) { const node = board.nodes.find(n => n.id === nodeId); if (node) focusItem(node); }
+  viewport.focus({ preventScroll: true });
+}
+function openBoard(id, nodeId = null, keepFilter = false) {
+  return navigate(async () => {
+    const entry = library.boards.find(e => e.board.id === id && !e.trashedAt); if (!entry) return;
+    entry.openedAt = new Date().toISOString(); library.lastBoardId = id;
+    if (await persistLibrary()) activateBoard(entry, nodeId, keepFilter); else return false;
+  });
+}
+function showLibraryNow() {
+  syncBoard(); closeMenu(); $('#library-page').hidden = false; $('.app-layout').inert = true; $('.app-layout').setAttribute('aria-hidden', 'true');
+  document.title = '我的画布 · 思想画布'; renderLibrary(); $('#library-new-btn').focus({ preventScroll: true });
+}
+function showLibrary() { return navigate(async () => { libraryTrash = false; showLibraryNow(); }); }
+function renderSwitcher() {
+  const select = $('#canvas-select'); select.replaceChildren();
+  for (const entry of library.boards.filter(e => !e.trashedAt).sort((a, b) => b.openedAt.localeCompare(a.openedAt))) {
+    const option = el('option', '', entry.board.title); option.value = entry.board.id; select.append(option);
+  }
+  select.value = board.id;
+}
+function canvasPreview(canvas) {
+  const svg = svgEl('svg', { viewBox: '0 0 360 170', class: 'canvas-preview', 'aria-hidden': 'true' });
+  const items = [...canvas.groups, ...canvas.nodes], bounds = boundsOf(items);
+  if (!bounds) { const text = svgEl('text', { x: 180, y: 89, 'text-anchor': 'middle', fill: '#a5b09c', 'font-size': 12 }); text.textContent = '为下一个想法，留白'; svg.append(text); return svg; }
+  const scale = Math.min(310 / bounds.w, 126 / bounds.h, 1), dx = (360 - bounds.w * scale) / 2 - bounds.x * scale, dy = (170 - bounds.h * scale) / 2 - bounds.y * scale;
+  const g = svgEl('g', { transform: `translate(${dx},${dy}) scale(${scale})` });
+  for (const group of canvas.groups) g.append(svgEl('rect', { x: group.x, y: group.y, width: group.w, height: group.h, rx: 14, fill: COLORS[group.color].bg, stroke: COLORS[group.color].border, 'stroke-width': 2 / scale, 'stroke-dasharray': `${4 / scale} ${4 / scale}` }));
+  const nodes = new Map(canvas.nodes.map(n => [n.id, n]));
+  for (const edge of canvas.edges) {
+    const a = nodes.get(edge.from), b = nodes.get(edge.to); if (a && b) g.append(svgEl('path', { d: edgeGeometry(a, b).d, fill: 'none', stroke: '#a9b79e', 'stroke-width': 1 / scale }));
+  }
+  for (const node of canvas.nodes) {
+    g.append(svgEl('rect', { x: node.x, y: node.y, width: node.w, height: node.h, rx: 12, fill: COLORS[node.color].bg, stroke: COLORS[node.color].border, 'stroke-width': 1 / scale }));
+    if (node.kind === 'image') g.append(svgEl('image', { x: node.x + 8, y: node.y + 8, width: node.w - 16, height: node.h - 16, href: node.src, preserveAspectRatio: 'xMidYMid slice' }));
+    else {
+      const text = svgEl('text', { x: node.x + 15, y: node.y + 35, fill: COLORS[node.color].ink, 'font-size': Math.min(22, 8 / scale) }); text.textContent = node.title.slice(0, 13); g.append(text);
+      for (let i = 0; i < 3; i++) g.append(svgEl('rect', { x: node.x + 15, y: node.y + 55 + i * 20, width: (node.w - 38) * (i === 2 ? .5 : .8), height: 4, rx: 2, fill: COLORS[node.color].border }));
+    }
+  }
+  svg.append(g); return svg;
+}
+function renderLibrary() {
+  syncBoard(); renderSwitcher(); const active = library.boards.filter(e => !e.trashedAt), trashed = library.boards.filter(e => e.trashedAt);
+  $('#active-count').textContent = active.length; $('#trash-count').textContent = trashed.length;
+  $('#active-tab').classList.toggle('active', !libraryTrash); $('#trash-tab').classList.toggle('active', libraryTrash);
+  $('#active-tab').setAttribute('aria-pressed', String(!libraryTrash)); $('#trash-tab').setAttribute('aria-pressed', String(libraryTrash));
+  $('#auto-open-last').checked = library.autoOpenLast;
+  const query = $('#library-search').value.trim().toLowerCase(), entries = (libraryTrash ? trashed : active).filter(e => e.board.title.toLowerCase().includes(query)).sort((a, b) => (b.trashedAt || b.openedAt).localeCompare(a.trashedAt || a.openedAt));
+  const fragment = document.createDocumentFragment();
+  for (const entry of entries) {
+    const canvas = entry.board, card = el('article', 'library-card'); card.dataset.boardId = canvas.id;
+    const preview = el('button', 'preview-button'); preview.setAttribute('aria-label', `${libraryTrash ? '恢复' : '打开'}画布：${canvas.title}`); preview.append(canvasPreview(canvas));
+    preview.addEventListener('click', () => libraryTrash ? restoreCanvas(canvas.id) : openBoard(canvas.id));
+    const info = el('div', 'library-card-info'), title = el('h2', '', canvas.title);
+    const stamp = libraryTrash ? entry.trashedAt : canvas.updatedAt;
+    info.append(title, el('p', 'library-card-counts', `${canvas.nodes.length} 个想法 · ${canvas.groups.length} 个分组 · ${canvas.edges.length} 条连接`), el('p', 'library-card-date', `${libraryTrash ? '移入回收站' : '最近修改'} ${Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}`));
+    const actions = el('div', 'library-card-actions');
+    const buttons = libraryTrash ? [['恢复', () => restoreCanvas(canvas.id)], ['永久删除', () => deleteCanvas(canvas.id)]] : [['打开', () => openBoard(canvas.id)], ['重命名', () => requestCanvasName(canvas.id)], ['复制', () => duplicateCanvas(canvas.id)], ['移入回收站', () => trashCanvas(canvas.id)]];
+    for (const [label, action] of buttons) { const button = el('button', 'text-button', label); button.addEventListener('click', action); actions.append(button); }
+    info.append(actions); card.append(preview, info); fragment.append(card);
+  }
+  $('#library-grid').replaceChildren(fragment); $('#library-empty').hidden = entries.length > 0;
+  $('#library-empty').textContent = query ? '没有找到这张画布。' : libraryTrash ? '回收站是空的。删除的画布会先保存在这里。' : '还没有画布。新建一张，放下第一个想法。';
+}
+function requestCanvasName(id = null) {
+  if (navigationBusy) return;
+  nameTarget = id; $('#canvas-name-heading').textContent = id ? '重命名画布' : '新建画布';
+  $('#canvas-name-input').value = id ? library.boards.find(e => e.board.id === id)?.board.title || '' : '';
+  $('#canvas-name-dialog').showModal(); $('#canvas-name-input').focus();
+}
+$('#canvas-name-form').addEventListener('submit', async event => {
+  event.preventDefault(); const title = $('#canvas-name-input').value.trim(); if (!title) return;
+  const id = nameTarget; $('#canvas-name-dialog').close();
+  await navigate(async () => {
+    if (id) {
+      const entry = library.boards.find(e => e.board.id === id && !e.trashedAt); if (!entry) return;
+      if (board.id === id) { history.push(board); board.title = title; board.updatedAt = new Date().toISOString(); }
+      else { entry.board.title = title; entry.board.updatedAt = new Date().toISOString(); }
+      syncBoard();
+      await persistLibrary(); render(); renderLibrary();
+    } else {
+      if (library.boards.length >= MAX_BOARDS) throw new Error('最多保存 100 张画布（含回收站），请先清理回收站');
+      const next = createBoard(true); next.title = title; const entry = boardEntry(next); library.boards.push(entry); library.lastBoardId = next.id;
+      if (await persistLibrary()) activateBoard(entry);
+    }
+  });
+});
+function duplicateCanvas(id) {
+  return navigate(async () => {
+    if (library.boards.length >= MAX_BOARDS) throw new Error('画布数量已达到 100 张，请先清理回收站');
+    const source = library.boards.find(e => e.board.id === id && !e.trashedAt); if (!source) return;
+    const next = clone(source.board); next.id = uid(); next.title = `${next.title.slice(0, 75)} · 副本`; next.updatedAt = new Date().toISOString();
+    library.boards.push(boardEntry(next)); await persistLibrary(); renderLibrary();
+  });
+}
+function trashCanvas(id) {
+  return navigate(async () => {
+    const entry = library.boards.find(e => e.board.id === id); if (!entry) return;
+    entry.trashedAt = new Date().toISOString();
+    if (library.lastBoardId === id) library.lastBoardId = library.boards.find(e => !e.trashedAt)?.board.id || null;
+    await persistLibrary(); renderLibrary(); toast('画布已移入回收站，可随时恢复');
+  });
+}
+function restoreCanvas(id) {
+  return navigate(async () => { const entry = library.boards.find(e => e.board.id === id); if (!entry) return; entry.trashedAt = null; await persistLibrary(); renderLibrary(); toast('画布已恢复到全部画布'); });
+}
+async function deleteCanvas(id) {
+  const entry = library.boards.find(e => e.board.id === id && e.trashedAt); if (!entry) return;
+  if (!await confirmAction('永久删除画布？', `「${entry.board.title}」及其中的内容将被永久删除。建议先导出整个画布库备份，此操作无法撤销。`, '永久删除')) return;
+  return navigate(async () => { library.boards = library.boards.filter(e => e.board.id !== id); await persistLibrary(); renderLibrary(); });
+}
+$('#library-btn').addEventListener('click', showLibrary);
+$('#canvas-select').addEventListener('change', async event => { await openBoard(event.target.value); renderSwitcher(); });
+$('#library-new-btn').addEventListener('click', () => requestCanvasName());
+$('#library-import-btn').addEventListener('click', () => $('#import-input').click());
+$('#library-search').addEventListener('input', renderLibrary);
+$('#active-tab').addEventListener('click', () => { libraryTrash = false; renderLibrary(); });
+$('#trash-tab').addEventListener('click', () => { libraryTrash = true; renderLibrary(); });
+$('#auto-open-last').addEventListener('change', event => { const checked = event.target.checked; navigate(async () => { library.autoOpenLast = checked; await persistLibrary(); renderLibrary(); }); });
 function applyView(save = false) {
   world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.zoom})`;
   viewport.style.backgroundSize = `${22 * view.zoom}px ${22 * view.zoom}px`;
@@ -220,17 +386,21 @@ function renderEdges() {
 }
 function renderOutline() {
   const list = $('#outline-list'), fragment = document.createDocumentFragment();
-  const scheduled = scheduledNodes(board.nodes);
-  const all = filter === 'upcoming' ? scheduled : filter === 'tasks' ? board.nodes.filter(n => n.kind === 'task') : [...board.groups, ...board.nodes];
-  const matches = all.filter(matchesSearch);
-  for (const n of matches) {
-    const button = el('button', `outline-item${selected?.id === n.id ? ' selected' : ''}${isFinished(n) ? ' done' : ''}${filter === 'upcoming' ? ' scheduled-outline' : ''}`);
-    button.dataset.id = n.id;
+  syncBoard(); const scheduled = libraryReminders(library, $('#reminder-scope').value === 'current' ? board.id : null);
+  const all = filter === 'upcoming' ? scheduled : (filter === 'tasks' ? board.nodes.filter(n => n.kind === 'task') : [...board.groups, ...board.nodes]).map(node => ({ node, boardId: board.id, boardTitle: board.title }));
+  const matches = all.filter(entry => matchesSearch(entry.node) || search && entry.boardTitle.toLowerCase().includes(search));
+  for (const { node: n, boardId, boardTitle } of matches) {
+    const button = el('button', `outline-item${boardId === board.id && selected?.id === n.id ? ' selected' : ''}${isFinished(n) ? ' done' : ''}${filter === 'upcoming' ? ' scheduled-outline' : ''}`);
+    button.dataset.id = n.id; button.dataset.boardId = boardId;
     if (n.kind === 'note') { const dot = el('i', 'outline-dot'); dot.style.background = COLORS[n.color].swatch; button.append(dot); }
     else button.append(icon(n.kind === 'timer' ? 'clock' : n.kind === 'group' ? 'group' : n.kind === 'task' ? 'task' : 'image'));
     const text = el('span', 'outline-item-text'); text.append(el('span', 'outline-item-title', n.title));
-    if (filter === 'upcoming') { text.append(el('small', 'outline-deadline', deadlineLabel(n))); button.dataset.urgency = deadlineState(n).status; }
-    button.append(text); button.title = n.title; button.addEventListener('click', () => { focusItem(n, n.kind === 'group' ? 'group' : 'node'); if (innerWidth < 700) setSidebarCollapsed(true); }); fragment.append(button);
+    if (filter === 'upcoming') { text.append(el('small', 'outline-source', boardTitle), el('small', 'outline-deadline', deadlineLabel(n))); button.dataset.urgency = deadlineState(n).status; }
+    button.append(text); button.title = n.title; button.addEventListener('click', async () => {
+      if (boardId !== board.id) { if (!await openBoard(boardId, n.id, true)) return; }
+      else focusItem(n, n.kind === 'group' ? 'group' : 'node');
+      if (innerWidth < 700) setSidebarCollapsed(true);
+    }); fragment.append(button);
   }
   if (!matches.length) fragment.append(el('p', 'outline-empty', search ? '没有找到这个想法。' : filter === 'upcoming' ? '暂时没有待提醒的事项。给待办设置截止时间，或按 C 添加时间卡片。' : filter === 'tasks' ? '还没有待办。按 T，在画布上放下一件想做的事。' : '还没有内容，放下第一个想法吧。'));
   list.replaceChildren(fragment);
@@ -244,7 +414,7 @@ function refreshTemporal(updateOutline = true) {
     const n = byId.get(card.dataset.id), slot = card.querySelector('.time-details'); if (slot && n) renderTimeSlot(n, slot, now);
   }
   if (updateOutline) for (const row of $$('.scheduled-outline')) {
-    const n = byId.get(row.dataset.id); if (!n) continue;
+    const n = library.boards.find(e => e.board.id === row.dataset.boardId)?.board.nodes.find(n => n.id === row.dataset.id); if (!n) continue;
     row.querySelector('.outline-deadline').textContent = deadlineLabel(n, now); row.dataset.urgency = deadlineState(n, now)?.status || 'normal';
   }
 }
@@ -268,7 +438,8 @@ function renderSelection() {
 }
 function setSelection(selection) { selected = selection; renderSelection(); renderOutline(); }
 function render() {
-  $('#board-title').value = board.title; document.title = `${board.title} · 思想画布`;
+  syncBoard();
+  $('#board-title').value = board.title; document.title = homeOpen() ? '我的画布 · 思想画布' : `${board.title} · 思想画布`; renderSwitcher();
   renderGroups(); renderNodes(); renderEdges(); renderOutline(); renderSelection();
   $('#empty-state').hidden = board.nodes.length + board.groups.length > 0;
   $('#canvas-stats').textContent = `${board.nodes.length} 个想法  /  ${board.edges.length} 条连接`;
@@ -504,6 +675,8 @@ async function readImage(file) {
   return { src: canvas.toDataURL('image/webp', .88), ratio: canvas.height / canvas.width };
 }
 async function addImages(files, point) {
+  pendingImages++;
+  try {
   const images = [...files].filter(f => f.type.startsWith('image/'));
   if (!images.length) return toast('请拖入或选择图片文件');
   if (images.length > 12) return toast('一次最多导入 12 张图片');
@@ -516,36 +689,42 @@ async function addImages(files, point) {
     } catch (error) { toast(error.message); }
   }
   if (items.length) { mutate(() => { board.nodes.push(...items); selected = { type: 'node', id: items.at(-1).id }; }); setTool('select'); toast(`已放入 ${items.length} 张图片`); }
+  } finally { pendingImages--; }
 }
 $('#image-input').addEventListener('change', async event => { const files = [...event.target.files]; event.target.value = ''; await addImages(files, imagePoint || centerPoint()); imagePoint = null; });
 viewport.addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; viewport.classList.add('drag-over'); } });
 viewport.addEventListener('dragleave', event => { if (!viewport.contains(event.relatedTarget)) viewport.classList.remove('drag-over'); });
 viewport.addEventListener('drop', event => { event.preventDefault(); viewport.classList.remove('drag-over'); addImages(event.dataTransfer.files, worldPoint(event)); });
-document.addEventListener('paste', event => { if (isEditingText() || document.querySelector('dialog[open]')) return; const files = [...(event.clipboardData?.files || [])]; if (files.some(f => f.type.startsWith('image/'))) { event.preventDefault(); addImages(files, centerPoint()); } });
+document.addEventListener('paste', event => { if (homeOpen() || navigationBusy || isEditingText() || document.querySelector('dialog[open]')) return; const files = [...(event.clipboardData?.files || [])]; if (files.some(f => f.type.startsWith('image/'))) { event.preventDefault(); addImages(files, centerPoint()); } });
 
 async function confirmAction(title, message, label = '确认') {
   const dialog = $('#confirm-dialog'); $('#confirm-title').textContent = title; $('#confirm-message').textContent = message; $('#confirm-accept').textContent = label;
   dialog.returnValue = ''; dialog.showModal(); return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true }));
 }
-function exportBoard() {
-  const blob = new Blob([JSON.stringify({ ...board, view: { ...view, width: viewport.clientWidth, height: viewport.clientHeight } }, null, 2)], { type: 'application/json' });
+function downloadBackup(data, title) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = el('a'); a.href = url;
   const date = new Date(); const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  a.download = `${board.title.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_') || '思想画布'}-${stamp}.json`; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); toast('画布备份已导出，图片也包含在备份中');
+  a.download = `${title.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_') || '思想画布'}-${stamp}.json`; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); toast('备份已导出，图片也包含在备份中');
 }
+function exportBoard() { commitBoardTitle(); downloadBackup({ ...board, view: { ...view, width: viewport.clientWidth, height: viewport.clientHeight } }, board.title); }
+function exportLibrary() { if (!homeOpen()) commitBoardTitle(); syncBoard(); downloadBackup(library, '思想画布-完整画布库'); }
+$('#export-all-btn').addEventListener('click', exportLibrary); $('#export-all-menu-btn').addEventListener('click', () => { closeMenu(); exportLibrary(); });
 $('#import-input').addEventListener('change', async event => {
   const file = event.target.files[0]; event.target.value = ''; if (!file) return;
   try {
-    if (file.size > 60 * 1024 * 1024) throw new Error('备份文件不能超过 60 MB');
-    const imported = validateBoard(JSON.parse(await file.text()));
-    if (!await confirmAction('导入这张画布？', `「${imported.title}」包含 ${imported.nodes.length} 个想法和 ${imported.edges.length} 条连接。导入会替换当前画布，可通过撤销恢复。建议先导出当前画布备份。`, '导入画布')) return;
-    history.push(board); board = imported; selected = null; search = ''; $('#search-input').value = ''; setTool('select'); render(); fitAll(false); scheduleSave(); toast('画布已导入');
+    if (file.size > 120 * 1024 * 1024) throw new Error('备份文件不能超过 120 MB');
+    const entries = prepareImport(JSON.parse(await file.text()), library.boards.length);
+    if (!await confirmAction('导入为新画布？', `备份中有 ${entries.length} 张画布。将添加到画布库，保留现有内容；整库备份中的回收站状态也会保留。`, '导入画布')) return;
+    await navigate(async () => {
+      if (library.boards.length + entries.length > MAX_BOARDS) throw new Error('导入后超过 100 张画布');
+      library.boards.push(...entries); const first = entries.find(e => !e.trashedAt);
+      if (first) library.lastBoardId = first.board.id;
+      if (await persistLibrary()) { if (entries.length === 1 && first) activateBoard(first); else { libraryTrash = !first; showLibraryNow(); } toast(`已新增 ${entries.length} 张画布`); }
+    });
   } catch (error) { toast(error instanceof SyntaxError ? '文件无法解析，请选择从思想画布导出的 JSON 文件' : error.message); }
 });
-$('#new-btn').addEventListener('click', async () => {
-  closeMenu(); if (!await confirmAction('给新的想法腾个地方', '这会清空当前画布。建议先导出备份；清空后也可以通过撤销恢复。', '开始新画布')) return;
-  history.push(board); board = createBoard(true); board.title = '一张新的思想画布'; selected = null; search = ''; $('#search-input').value = ''; setTool('select'); render(); fitAll(false); scheduleSave();
-});
+$('#new-btn').addEventListener('click', () => { closeMenu(); requestCanvasName(); });
 
 $$('[data-tool]').forEach(button => button.addEventListener('click', () => {
   if (button.dataset.tool === 'image') { imagePoint = centerPoint(); $('#image-input').click(); return; }
@@ -557,10 +736,12 @@ $('#zoom-in').addEventListener('click', () => zoomBy(1.2)); $('#zoom-out').addEv
 $('#zoom-value').addEventListener('click', () => { view = zoomAt(view, { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, 1); applyView(true); });
 $('#export-btn').addEventListener('click', exportBoard); $('#import-btn').addEventListener('click', () => { closeMenu(); $('#import-input').click(); });
 $('#empty-add').addEventListener('click', () => addAt('note', centerPoint())); $('#sidebar-add').addEventListener('click', () => addAt('note', centerPoint()));
-$('#board-title').addEventListener('change', event => { const title = event.target.value.trim() || '未命名画布'; if (title !== board.title) mutate(() => { board.title = title; }); else event.target.value = title; });
-$('#board-title').addEventListener('keydown', event => { if (event.key === 'Enter') event.target.blur(); });
+function commitBoardTitle() { const input = $('#board-title'), title = input.value.trim() || '未命名画布'; if (title !== board.title) mutate(() => { board.title = title; }); else input.value = title; }
+$('#board-title').addEventListener('change', commitBoardTitle);
+$('#board-title').addEventListener('keydown', event => { if (event.key === 'Enter') { commitBoardTitle(); event.target.blur(); } });
 $('#search-input').addEventListener('input', event => { search = event.target.value.trim().toLowerCase(); renderOutline(); applySearch(); });
-function setFilter(next) { filter = next; $('#overview-btn').classList.toggle('active', next === 'all'); $('#tasks-btn').classList.toggle('active', next === 'tasks'); $('#upcoming-btn').classList.toggle('active', next === 'upcoming'); $('#outline-title').textContent = next === 'upcoming' ? '未完成事项 · 按截止时间排序' : next === 'tasks' ? '我的待办卡片' : '画布中的内容'; renderOutline(); }
+function setFilter(next) { filter = next; $('#reminder-scope-label').hidden = next !== 'upcoming'; $('#overview-btn').classList.toggle('active', next === 'all'); $('#tasks-btn').classList.toggle('active', next === 'tasks'); $('#upcoming-btn').classList.toggle('active', next === 'upcoming'); $('#outline-title').textContent = next === 'upcoming' ? '未完成事项 · 按截止时间排序' : next === 'tasks' ? '我的待办卡片' : '画布中的内容'; renderOutline(); }
+$('#reminder-scope').addEventListener('change', renderOutline);
 $('#overview-btn').addEventListener('click', () => { setFilter('all'); fitAll(); }); $('#tasks-btn').addEventListener('click', () => setFilter('tasks'));
 $('#upcoming-btn').addEventListener('click', () => setFilter('upcoming'));
 function setSidebarCollapsed(collapsed) {
@@ -572,15 +753,16 @@ function setSidebarCollapsed(collapsed) {
 }
 $('#toggle-sidebar').addEventListener('click', () => setSidebarCollapsed(!$('#sidebar').classList.contains('collapsed')));
 $('#close-sidebar').addEventListener('click', () => setSidebarCollapsed(true));
+$('.sidebar-brand .brand').addEventListener('click', event => { event.preventDefault(); showLibrary(); });
 function closeMenu() { $('#more-menu').hidden = true; $('#more-btn').setAttribute('aria-expanded', 'false'); }
 $('#more-btn').addEventListener('click', () => { const hidden = !$('#more-menu').hidden; $('#more-menu').hidden = hidden; $('#more-btn').setAttribute('aria-expanded', String(!hidden)); });
 document.addEventListener('click', event => { if (!event.target.closest('#more-btn,#more-menu')) closeMenu(); });
 function showHelp() { closeMenu(); $('#help-dialog').showModal(); }
 $('#help-btn').addEventListener('click', showHelp); $('#help-menu-btn').addEventListener('click', showHelp);
 $$('[data-close]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
-function isEditingText() { return document.activeElement?.matches('input,textarea,[contenteditable=true]'); }
+function isEditingText() { return document.activeElement?.matches('input,textarea,select,[contenteditable=true]'); }
 document.addEventListener('keydown', event => {
-  if (event.isComposing || isEditingText() || document.querySelector('dialog[open]')) return;
+  if (homeOpen() || navigationBusy || event.isComposing || isEditingText() || document.querySelector('dialog[open]')) return;
   const command = event.ctrlKey || event.metaKey;
   if (command && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
   if (command && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); return; }
@@ -608,23 +790,24 @@ window.addEventListener('focus', () => refreshTemporal());
 async function init() {
   setSidebarCollapsed(innerWidth < 700);
   try {
-    const stored = await openStorage(); if (stored) board = validateBoard(stored);
-    status('所有改动已保存在此浏览器');
-  } catch (error) { storageBlocked = true; status('本地读取失败，请导出备份', 'error'); toast('无法读取本地存储。当前可以使用画布，请通过导出保存内容。'); console.error('本地存储不可用', error); }
+    library = await openStorage();
+    const entry = library.boards.find(e => e.board.id === library.lastBoardId && !e.trashedAt) || library.boards.find(e => !e.trashedAt);
+    board = entry?.board || createBoard(true);
+    if (!storageToken) { scheduleSave(false); await flushSave(); }
+    if (!storageBlocked && savedRevision === revision) status('所有改动已保存在此浏览器');
+  } catch (error) { storageBlocked = true; status('本地读取失败，请保留原始数据', 'error'); toast('无法读取本地存储。已停止写入以保留原始数据，请勿清除浏览器数据。'); console.error('本地存储不可用', error); }
   render();
-  if (board.view && board.view.width === viewport.clientWidth && board.view.height === viewport.clientHeight) { view = { x: board.view.x, y: board.view.y, zoom: board.view.zoom }; applyView(); }
-  else if (viewport.clientWidth < 700 && board.nodes.length) {
-    const first = board.nodes[0], zoom = clamp(Math.min(.9, (viewport.clientWidth - 36) / first.w, (viewport.clientHeight - 260) / first.h), .25, 1.25);
-    view = { x: viewport.clientWidth / 2 - (first.x + first.w / 2) * zoom, y: 130 - first.y * zoom, zoom }; applyView();
-  } else fitAll(false);
+  restoreView();
+  if (library.autoOpenLast && library.lastBoardId && !storageBlocked) activateBoard(library.boards.find(e => e.board.id === library.lastBoardId));
+  else showLibraryNow();
   let oldSize = { w: viewport.clientWidth, h: viewport.clientHeight };
   new ResizeObserver(() => {
     const w = viewport.clientWidth, h = viewport.clientHeight;
     if (w === oldSize.w && h === oldSize.h) return;
+    if (homeOpen()) { oldSize = { w, h }; return; }
     view.x += (w - oldSize.w) / 2; view.y += (h - oldSize.h) / 2;
     oldSize = { w, h }; applyView(true);
   }).observe(viewport);
-  if (!storageBlocked) scheduleSave();
 }
 await init();
 setInterval(() => { if (!document.hidden && !drag && !document.querySelector('dialog[open]')) refreshTemporal(); }, 15000);

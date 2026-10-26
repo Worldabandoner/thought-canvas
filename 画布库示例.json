@@ -1,0 +1,288 @@
+{
+  "format": "thought-canvas-library",
+  "version": 1,
+  "boards": [
+    {
+      "board": {
+        "version": 2,
+        "id": "c16e1f41-8336-4292-9859-2a3fe11b8e91",
+        "title": "灵感角落",
+        "nodes": [
+          {
+            "id": "seed-start",
+            "kind": "note",
+            "x": 100,
+            "y": 155,
+            "w": 286,
+            "h": 235,
+            "title": "把脑中的画面，\n放在这里。",
+            "body": "一个念头、一件小事，\n或一个还没想清楚的问题。\n\n让它先有位置，答案慢慢长出来。",
+            "color": "butter"
+          },
+          {
+            "id": "seed-task",
+            "kind": "task",
+            "x": 492,
+            "y": 170,
+            "w": 290,
+            "h": 245,
+            "title": "从一个小行动开始",
+            "color": "sage",
+            "body": "",
+            "due": "",
+            "items": [
+              {
+                "id": "seed-t1",
+                "text": "给这个空间起个名字",
+                "done": true
+              },
+              {
+                "id": "seed-t2",
+                "text": "放下此刻脑中的一个念头",
+                "done": false
+              },
+              {
+                "id": "seed-t3",
+                "text": "把有关的想法连接起来",
+                "done": false
+              }
+            ]
+          },
+          {
+            "id": "seed-position",
+            "kind": "note",
+            "x": 158,
+            "y": 452,
+            "w": 310,
+            "h": 210,
+            "title": "每个位置，都有你的含义",
+            "body": "左上角，可以是今天最在意的事。\n靠近一点，可能意味着彼此有关。\n\n这里的秩序，由你定义。",
+            "color": "blue"
+          },
+          {
+            "id": "seed-image",
+            "kind": "image",
+            "x": 904,
+            "y": 176,
+            "w": 300,
+            "h": 225,
+            "title": "给灵感留一扇窗",
+            "body": "",
+            "color": "paper",
+            "src": "./assets/landscape.svg"
+          },
+          {
+            "id": "seed-idea",
+            "kind": "note",
+            "x": 918,
+            "y": 444,
+            "w": 288,
+            "h": 218,
+            "title": "还没想好，也没关系",
+            "body": "那些暂时用不上的灵感，\n也值得有一个停靠的地方。\n\n双击编辑，或拖一张图片进来。",
+            "color": "lilac"
+          }
+        ],
+        "groups": [
+          {
+            "id": "seed-g1",
+            "kind": "group",
+            "x": 64,
+            "y": 122,
+            "w": 752,
+            "h": 550,
+            "title": "01  /  此刻，正在发生",
+            "body": "",
+            "color": "sage"
+          },
+          {
+            "id": "seed-g2",
+            "kind": "group",
+            "x": 866,
+            "y": 122,
+            "w": 376,
+            "h": 550,
+            "title": "02  /  留一点想象的空间",
+            "body": "",
+            "color": "lilac"
+          }
+        ],
+        "edges": [
+          {
+            "id": "seed-e1",
+            "from": "seed-start",
+            "to": "seed-task",
+            "label": "落地成行动",
+            "arrow": true
+          },
+          {
+            "id": "seed-e2",
+            "from": "seed-start",
+            "to": "seed-position",
+            "label": "找到自己的位置",
+            "arrow": false
+          },
+          {
+            "id": "seed-e3",
+            "from": "seed-image",
+            "to": "seed-idea",
+            "label": "由此想到",
+            "arrow": true
+          }
+        ],
+        "view": null,
+        "updatedAt": "2026-10-26T12:53:18.430Z"
+      },
+      "createdAt": "2026-10-26T12:53:18.441Z",
+      "openedAt": "2026-10-26T12:53:18.441Z",
+      "trashedAt": null
+    },
+    {
+      "board": {
+        "version": 2,
+        "id": "ecda8050-d542-4584-9209-14f3a63ed36b",
+        "title": "学习计划",
+        "nodes": [
+          {
+            "id": "0b6905f1-7f6b-431a-b864-d0be477843fb",
+            "kind": "timer",
+            "title": "今天，把网课刷完",
+            "body": "分成小步，一节一节完成。",
+            "color": "butter",
+            "x": 80,
+            "y": 140,
+            "w": 330,
+            "h": 400,
+            "due": "2026-10-26T15:59:00.000Z",
+            "startAt": "2026-10-18T16:00:00.000Z",
+            "progressValue": 6,
+            "progressTarget": 10,
+            "progressUnit": "节",
+            "completed": false
+          },
+          {
+            "id": "1cca1864-8568-4608-989f-84dff15e3983",
+            "kind": "timer",
+            "title": "四级考试 · 日期示例",
+            "body": "演示日期，可按自己的考试安排修改。",
+            "color": "blue",
+            "x": 490,
+            "y": 140,
+            "w": 330,
+            "h": 400,
+            "due": "2026-12-08T01:00:00.000Z",
+            "startAt": "2026-10-18T16:00:00.000Z",
+            "progressValue": 0,
+            "progressTarget": 0,
+            "progressUnit": "项",
+            "completed": false
+          },
+          {
+            "id": "f7547da4-e6f3-4f90-89de-d05b1db60bad",
+            "kind": "task",
+            "title": "复习清单 · 逾期示例",
+            "body": "",
+            "color": "sage",
+            "x": 900,
+            "y": 140,
+            "w": 310,
+            "h": 400,
+            "items": [
+              {
+                "id": "d694ee8f-91c8-4f42-834c-0ab0c0b6ff31",
+                "text": "整理最近做过的错题",
+                "done": true
+              },
+              {
+                "id": "d3b077b1-d547-45c4-81c6-df3df3b9fe70",
+                "text": "安排本周的听力练习",
+                "done": false
+              },
+              {
+                "id": "0fa78809-b1b8-4ec9-a820-46a853688a1f",
+                "text": "打印一套模拟试卷",
+                "done": false
+              }
+            ],
+            "due": "2026-10-25T10:00:00.000Z",
+            "startAt": "2026-10-18T16:00:00.000Z"
+          }
+        ],
+        "groups": [],
+        "edges": [],
+        "view": null,
+        "updatedAt": "2026-10-26T12:53:18.440Z"
+      },
+      "createdAt": "2026-10-26T12:53:18.441Z",
+      "openedAt": "2026-10-26T12:53:18.441Z",
+      "trashedAt": null
+    },
+    {
+      "board": {
+        "version": 2,
+        "id": "f7cea3c7-522d-4164-992e-fe6ebf52def8",
+        "title": "工作空间",
+        "nodes": [
+          {
+            "id": "db556604-4936-4043-9355-b75828d70c58",
+            "kind": "note",
+            "x": 100,
+            "y": 120,
+            "w": 290,
+            "h": 230,
+            "title": "让项目，逐步成形",
+            "body": "把目标放在这里。\n从一个小想法，走向一个可执行的计划。",
+            "color": "blue"
+          },
+          {
+            "id": "a9358e2b-1312-4f8d-b6ee-1c08ec421141",
+            "kind": "task",
+            "x": 490,
+            "y": 150,
+            "w": 290,
+            "h": 320,
+            "title": "这一周，推进一点",
+            "body": "",
+            "color": "sage",
+            "due": "",
+            "startAt": "2026-10-26T12:53:18.441Z",
+            "items": [
+              {
+                "id": "85c9a994-c9ef-494b-8cb3-303462c2b9af",
+                "text": "整理需求与优先级",
+                "done": true
+              },
+              {
+                "id": "c75ef663-7ce0-4bac-b029-d76d73fe7073",
+                "text": "完成第一版原型",
+                "done": false
+              },
+              {
+                "id": "28059242-caeb-4502-9cda-3c8a4f893dd0",
+                "text": "记录反馈，继续迭代",
+                "done": false
+              }
+            ]
+          }
+        ],
+        "groups": [],
+        "edges": [
+          {
+            "id": "4638b7cb-45c0-4baf-b488-70e71d9a8b2f",
+            "from": "db556604-4936-4043-9355-b75828d70c58",
+            "to": "a9358e2b-1312-4f8d-b6ee-1c08ec421141",
+            "label": "下一步",
+            "arrow": true
+          }
+        ],
+        "view": null,
+        "updatedAt": "2026-10-26T12:53:18.441Z"
+      },
+      "createdAt": "2026-10-26T12:53:18.441Z",
+      "openedAt": "2026-10-26T12:53:18.441Z",
+      "trashedAt": null
+    }
+  ],
+  "lastBoardId": "c16e1f41-8336-4292-9859-2a3fe11b8e91",
+  "autoOpenLast": false
+}
